@@ -8,7 +8,7 @@ version = "0.1.0"
 description = "Combinatorial Purged Cross-Validation with embargo for financial time series, scikit-learn compatible."
 readme = "README.md"
 license = { text = "MIT" }
-authors = [{ name = "Frederik Landt" }]
+authors = [{ name = "landtml" }]
 requires-python = ">=3.10"
 classifiers = [
     "Development Status :: 4 - Beta",
