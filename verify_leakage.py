@@ -29,13 +29,8 @@ from dataclasses import dataclass, field
 import numpy as np
 import pandas as pd
 
-from cpcv import (
-    CombinatorialPurgedCV,
-    make_t1,
-    _contiguous_blocks,
-    _end_positions,
-    _make_group_labels,
-)
+from purgedcv import CombinatorialPurgedCV, make_t1
+from purgedcv._splitter import _contiguous_blocks, _end_positions, _make_group_labels
 
 # Long-history, liquid names (period="max" pulls their full available history).
 TICKERS = ["^GSPC", "^DJI", "IBM", "KO", "GE", "XOM", "JNJ", "PG", "MSFT", "AAPL"]
@@ -190,7 +185,7 @@ def main() -> int:
         return 2
 
     print("\n" + "=" * 70)
-    print("CPCV LEAKAGE VERIFICATION CERTIFICATE")
+    print("PURGEDCV LEAKAGE VERIFICATION CERTIFICATE")
     print("=" * 70)
     earliest = min(s[2] for s in tally.spans)
     latest = max(s[3] for s in tally.spans)

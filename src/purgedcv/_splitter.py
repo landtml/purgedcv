@@ -1,4 +1,8 @@
-"""Combinatorial Purged Cross-Validation (CPCV) with an embargo window.
+"""Internal implementation of Combinatorial Purged Cross-Validation.
+
+Import from :mod:`purgedcv` (the package's public ``__init__.py``), not this
+module directly — this file is the private implementation detail, kept
+separate from the public API so it can be reorganized without breaking users.
 
 A clean, fully-vectorized implementation of the cross-validation scheme from
 Marcos Lopez de Prado, *Advances in Financial Machine Learning* (AFML),
@@ -43,7 +47,7 @@ try:  # sklearn compatibility is nice-to-have, not required to import this modul
 except Exception:  # pragma: no cover - sklearn always present per requirements.
     _Base = object  # type: ignore[assignment, misc]
 
-__all__ = ["make_t1", "CPCVPaths", "CombinatorialPurgedCV"]
+__all__ = ["CombinatorialPurgedCV", "CPCVPaths", "make_t1"]
 
 
 # --------------------------------------------------------------------------- #

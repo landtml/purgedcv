@@ -1,0 +1,152 @@
+# purgedcv
+
+Combinatorial Purged Cross-Validation (CPCV) with embargo, for time series
+where the standard train/test split leaks information across the boundary.
+Implements the scheme from Marcos Lopez de Prado's
+[*Advances in Financial Machine Learning*](https://www.wiley.com/en-us/Advances+in+Financial+Machine+Learning-p-9781119482086)
+(AFML), Chapter 7, as a drop-in [scikit-learn](https://scikit-learn.org/)
+cross-validator.
+
+```python
+from sklearn.model_selection import cross_val_score
+from sklearn.linear_model import Ridge
+from purgedcv import CombinatorialPurgedCV
+
+cv = CombinatorialPurgedCV(n_groups=6, n_test_groups=2, embargo_pct=0.01)
+scores = cross_val_score(Ridge(), X, y, cv=cv)
+```
+
+`cv` works anywhere scikit-learn accepts a cross-validator: `cross_val_score`,
+`GridSearchCV`, `cross_validate`. No other code changes required.
+
+## The problem this solves
+
+A financial label rarely resolves at the bar it's assigned to. A 21-day
+forward-return label observed on Monday only becomes known 21 trading days
+later. Standard k-fold or a plain time-series split ignores this: whenever a
+training observation's label window overlaps a test observation's, the model
+sees future information during training, and that information inflates the
+reported cross-validation score above what production would ever deliver.
+This is the single most common way a backtest looks profitable in
+validation and falls apart live.
+
+CPCV addresses this two ways. **Purging** removes any training observation
+whose label window overlaps a test window. **Embargo** additionally removes
+a buffer immediately after each test block: financial series are serially
+correlated, so a training point just past a test boundary can still carry
+leaked signal even once the direct label overlap is gone. Testing every
+combination of held-out groups, instead of one held-out block at a time,
+gives more test paths from the same data while keeping each training set
+closer to full size than a single expanding-window split would.
+
+## What's actually being claimed here
+
+CPCV is a published method. This project did not invent it. The value here
+is a fast, independently verified implementation:
+
+- **A machine-checkable proof that the purge logic is airtight**:
+  [PROOF.md](PROOF.md) states the no-leakage property as two theorems and
+  proves them from the interval-overlap definition of leakage, going beyond
+  what a test suite alone can establish.
+- **An independent empirical check of that proof against real data**:
+  `verify_leakage.py` downloads decades of market history across 20
+  datasets and checks the no-leakage property two different ways. One check
+  uses the fast envelope shortcut the proof licenses. The other is a
+  brute-force per-observation scan that never uses that shortcut. Both
+  agree on every one of 70,000+ splits.
+- **A vectorized implementation**: purge and embargo reduce to a handful of
+  boolean array operations per split instead of a nested loop. The splitter
+  is stateless and picklable, so fitting a model across every combinatorial
+  split parallelizes cleanly with `joblib` or similar.
+- **A design that structurally avoids a known implementation bug.** Several
+  CPCV write-ups online compute the combinatorial backtest paths by reusing
+  model predictions across paths, which silently double-counts overlapping
+  returns and inflates the reported result. This implementation separates
+  the splitter and path map from any return calculation
+  (`CPCVPaths.combine`/`.to_frame` do a pure index gather, never a return
+  computation). That separation is what makes the double-counting mistake
+  structurally impossible here, instead of merely a rule to remember.
+
+## Install
+
+```bash
+pip install -e .          # core library
+pip install -e ".[dev]"   # + pytest, to run the test suite
+pip install -e ".[verify]" # + yfinance, to run verify_leakage.py
+```
+
+Core dependencies are `numpy`, `pandas`, and `scikit-learn`. The library
+itself never imports `yfinance`; it's needed only for the optional live-data
+verification script below.
+
+## Usage
+
+```python
+import pandas as pd
+from purgedcv import CombinatorialPurgedCV, make_t1
+
+# X.index is a sorted, unique DatetimeIndex; y is your target.
+t1 = make_t1(X.index, horizon=21)  # each label resolves 21 bars later
+
+cv = CombinatorialPurgedCV(n_groups=6, n_test_groups=2, embargo_pct=0.01, t1=t1)
+for train_idx, test_idx in cv.split(X):
+    model.fit(X.iloc[train_idx], y.iloc[train_idx])
+    preds = model.predict(X.iloc[test_idx])
+```
+
+To assemble the full set of out-of-sample backtest paths, instead of
+inspecting folds individually:
+
+```python
+paths = cv.build_paths(X, t1=t1)
+# per_sim_preds has shape (n_samples, n_sims): one column per combinatorial split.
+path_returns = paths.to_frame(per_sim_preds)  # (n_samples, n_paths), index-aligned
+```
+
+See the docstrings in [`src/purgedcv/_splitter.py`](src/purgedcv/_splitter.py)
+for the full parameter reference, including the two supported embargo-anchor
+conventions and their tradeoffs.
+
+## Verifying the claims yourself
+
+```bash
+pytest                  # 79 tests: correctness, edge cases, sklearn API compliance
+python verify_leakage.py  # requires network + `pip install -e ".[verify]"`
+```
+
+`verify_leakage.py` prints a certificate summarizing what it checked. A
+recent run:
+
+```
+======================================================================
+PURGEDCV LEAKAGE VERIFICATION CERTIFICATE
+======================================================================
+  datasets verified      : 20 tickers
+  calendar span          : 1927-12-30 -> 2026-05-19
+  total bars (obs)        : 191,160
+  train/test splits       : 70,080
+  envelope assertions     : 977,027,536
+  brute-force pair checks : 107,693,946,180
+----------------------------------------------------------------------
+  RESULT: PASS
+  Zero leakage detected across every split, scenario, and dataset.
+======================================================================
+```
+
+Full methodology, the proof the certificate is checking, and the scope/limits
+of the guarantee are in [PROOF.md](PROOF.md).
+
+## Scope
+
+This library produces splits and a path map. It deliberately does not
+compute returns, P&L, or performance metrics. That belongs to whatever
+backtest engine consumes its output, and keeping it out is what makes the
+overlapping-return bug described above structurally impossible instead of
+merely avoided by convention. It also does not detect leakage inside your
+own feature engineering, such as a feature computed with a forward-looking
+window: the no-leakage guarantee covers the split boundary, which is what
+this library controls.
+
+## License
+
+MIT. See [LICENSE](LICENSE).

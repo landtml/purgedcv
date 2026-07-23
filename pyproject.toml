@@ -1,0 +1,40 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "purgedcv"
+version = "0.1.0"
+description = "Combinatorial Purged Cross-Validation with embargo for financial time series, scikit-learn compatible."
+readme = "README.md"
+license = { text = "MIT" }
+authors = [{ name = "Frederik Landt" }]
+requires-python = ">=3.10"
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Science/Research",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Topic :: Scientific/Engineering",
+]
+dependencies = [
+    "numpy>=1.24",
+    "pandas>=2.0",
+    "scikit-learn>=1.3",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=7.4"]
+verify = ["yfinance>=0.2.40"]
+
+[project.urls]
+Homepage = "https://github.com/landtml/purgedcv"
+Repository = "https://github.com/landtml/purgedcv"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+markers = [
+    "integration: requires network access (live data download); skipped automatically when unavailable",
+]

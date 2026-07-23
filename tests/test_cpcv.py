@@ -2,8 +2,9 @@
 
 Each test pins a property the AFML ch. 7 scheme must satisfy. Together they form
 the regression net that keeps the implementation honest -- notably the
-path-stitch test, which fails if anyone "fixes" the consume-as-you-go counter by
-copying the mask per path (the degenerate behaviour Gemini proposed).
+path-stitch test, which fails if the consume-as-you-go counter is "simplified"
+into copying the mask per path, a degenerate implementation that silently
+duplicates predictions across paths instead of stitching them correctly.
 """
 
 from __future__ import annotations
@@ -15,13 +16,8 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from cpcv import (
-    CombinatorialPurgedCV,
-    CPCVPaths,
-    make_t1,
-    _end_positions,
-    _make_group_labels,
-)
+from purgedcv import CombinatorialPurgedCV, CPCVPaths, make_t1
+from purgedcv._splitter import _end_positions, _make_group_labels
 
 # (n_groups, n_test_groups) configurations exercised across the suite.
 CONFIGS = [(6, 2), (8, 2), (10, 3), (5, 2), (4, 1)]

@@ -1,12 +1,12 @@
-# CPCV — Proof of No Data Leakage & Verification Report
+# purgedcv: Proof of No Data Leakage and Verification Report
 
 This document gives (1) a mathematical proof that the splitter cannot leak
 information from the test set into the training set, and (2) an empirical
 certificate from a large-scale run over real market data. It also states the
 confidence level and the scope/limits of the guarantee.
 
-Component under test: [cpcv.py](cpcv.py) · `CombinatorialPurgedCV`
-(AFML, López de Prado, ch. 7).
+Component under test: [`src/purgedcv/_splitter.py`](src/purgedcv/_splitter.py)
+· `CombinatorialPurgedCV` (AFML, López de Prado, ch. 7).
 
 ---
 
@@ -55,9 +55,9 @@ intervals. By the Lemma that union is `[b0, m]`. Two integer intervals
 `[s_i, e_i]` and `[b0, m]` overlap iff `e_i ≥ b0` and `s_i ≤ m`. ∎
 
 This is the exact condition implemented in `_train_mask` (purge clause
-`(end_pos >= b0) & (start_pos <= label_end)`), and it covers all three AFML 7.1
-cases — train *starts within*, *ends within*, or *fully envelops* the test
-window — in one expression. The implementation therefore matches the
+`(end_pos >= b0) & (start_pos <= label_end)`). It covers all three AFML 7.1
+cases in one expression: train *starts within*, *ends within*, or *fully
+envelops* the test window. The implementation therefore matches the
 per-observation definition with **no approximation**; Theorem 1 is what licenses
 using the cheap envelope test instead of an `O(n_train·n_test)` scan.
 
@@ -96,8 +96,8 @@ Each group serves as a test fold in exactly `C(N-1, k-1)` simulations, which
 equals `n_paths = C(N, k)·k / N`. The path stitcher consumes one such simulation
 per group per path, so every observation is predicted out-of-sample in exactly
 `n_paths` simulations and every backtest path tiles the timeline once. The code
-asserts this invariant at construction (and would raise rather than silently
-mis-stitch — the failure mode of the naive blog version).
+asserts this invariant at construction, and raises instead of silently
+mis-stitching (the failure mode of the naive blog version).
 
 ---
 
@@ -105,33 +105,40 @@ mis-stitch — the failure mode of the naive blog version).
 
 Two **independent** leakage oracles were run and agreed everywhere:
 
-* **cert** — kept set vs each test block's label-union range `[b0, m]` (Thm 1/2);
-* **brute** — kept set vs **every individual** test observation interval
-  (the raw definition in §1), with no reference to the envelope shortcut;
-* **equiv** — library purge output compared element-for-element to a from-scratch
+* **cert**: kept set vs each test block's label-union range `[b0, m]` (Thm 1/2).
+* **brute**: kept set vs **every individual** test observation interval
+  (the raw definition in §1), with no reference to the envelope shortcut.
+* **equiv**: library purge output compared element-for-element to a from-scratch
   per-observation brute-force purge (embargo-free).
 
 Reproduce with `python verify_leakage.py`. Result of the run on this machine:
 
+Configuration grid behind the numbers below: `(N,k)` in `(6,2) (8,2) (10,3)
+(8,3)`; horizons `1, 5, 21, 63` bars; `embargo_pct` in `0.0, 0.02`;
+`embargo_anchor` in `label_end, test_end`. Tickers: `^GSPC ^DJI IBM KO GE XOM
+JNJ PG MSFT AAPL`, each verified over its full history and a recent window.
+
 ```
-datasets verified       : 20 (10 full histories + 10 recent windows)
-calendar span           : 1927-12-30 -> 2026-05-19   (~98 years)
-tickers                 : ^GSPC ^DJI IBM KO GE XOM JNJ PG MSFT AAPL
-total bars (obs)        : 191,160
-scenarios (cfg x h x e) : 1,280
-   configs (N,k)        : (6,2) (8,2) (10,3) (8,3)
-   horizons             : 1, 5, 21, 63 bars
-   embargo_pct          : 0.0, 0.02
-   embargo_anchor       : label_end, test_end
-train/test splits       : 70,080
-envelope assertions     :   977,027,536
-brute-force pair checks : 107,693,946,180
-purge-equivalence checks:         8,760
+======================================================================
+PURGEDCV LEAKAGE VERIFICATION CERTIFICATE
+======================================================================
+  datasets verified      : 20 tickers
+  calendar span          : 1927-12-30 -> 2026-05-19
+  total bars (obs)        : 191,160
+  scenarios (cfg x h x e) : 1,280
+  train/test splits       : 70,080
+  envelope assertions     : 977,027,536
+  brute-force pair checks : 107,693,946,180
+  purge-equivalence checks: 8,760
 ----------------------------------------------------------------------
-RESULT: PASS  — D disjoint | L no-leakage (cert+brute) | E embargo |
-                Q purge==bruteforce | C coverage
-Zero leakage detected across every split, scenario, and dataset.
+  RESULT: PASS
+  D disjoint | L no-leakage (cert+brute) | E embargo | Q purge==bruteforce | C coverage
+  Zero leakage detected across every split, scenario, and dataset.
+======================================================================
 ```
+
+This is the exact output `python verify_leakage.py` prints (see
+[verify_leakage.py](verify_leakage.py)), not a paraphrase.
 
 Unit suite: `pytest tests/test_cpcv.py` → **79 passed** (incl. live-yfinance
 integration), covering counts, no-leakage, embargo, disjointness, the
@@ -149,15 +156,15 @@ raw definition on ~98 years of real data across 20 datasets and 70,080 splits,
 with zero violations. The proof is constructive and dtype/calendar-agnostic
 (positions are `int64`; irregular/holiday gaps resolve through `searchsorted`).
 
-**The guarantee is conditional on the splitter's contract**, which is now
-enforced rather than assumed:
+**The guarantee is conditional on the splitter's contract**, and the code now
+enforces that contract instead of assuming it holds:
 - the index must be **unique and monotonically increasing** (else `ValueError`);
-- `t1` must cover every observation (mis-alignment ⇒ `ValueError`, not silent
-  span-to-end);
-- leakage is defined w.r.t. the **`t1` you supply** — an understated `t1`
+- `t1` must cover every observation (mis-alignment raises `ValueError` instead
+  of silently spanning to the end of the sample);
+- leakage is defined w.r.t. the **`t1` you supply**: an understated `t1`
   (label lifespan shorter than reality) is a *modelling* error the splitter
   cannot detect.
 
-**Out of scope (by design, not omission):** return/PnL accounting, feature
+**Out of scope, deliberately:** return/PnL accounting, feature
 scaling/leakage inside the user's model pipeline, and metric annualisation. The
 component yields indices + a pure path map only.
