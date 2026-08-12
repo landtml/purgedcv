@@ -95,9 +95,20 @@ neighbours that survive pure purging. `embargo = 0` reduces exactly to the purge
 Each group serves as a test fold in exactly `C(N-1, k-1)` simulations, which
 equals `n_paths = C(N, k)·k / N`. The path stitcher consumes one such simulation
 per group per path, so every observation is predicted out-of-sample in exactly
-`n_paths` simulations and every backtest path tiles the timeline once. The code
-asserts this invariant at construction, and raises instead of silently
-mis-stitching (the failure mode of the naive blog version).
+`n_paths` simulations and every backtest path tiles the timeline once.
+
+The stitch is total by construction: it clears the consumed simulation from one
+group's row only, so rows never interact, and each row starts with exactly
+`n_paths` candidates and hands out one per path. `build_paths` checks that
+regular-degree precondition before stitching — that is the assumption the
+argument rests on, and it is what would break if the combination geometry ever
+changed. (Through v0.1.0 the check sat *inside* the stitch loop, where the
+row-independence argument above made it unreachable.)
+
+Distinctness is what separates this from the naive implementation that copies
+one simulation's predictions across every path: `test_path_folds_are_non_degenerate`
+asserts every path column is distinct and every simulation is used exactly `k`
+times, which fails immediately under that shortcut.
 
 ---
 
@@ -138,12 +149,15 @@ PURGEDCV LEAKAGE VERIFICATION CERTIFICATE
 ```
 
 This is the exact output `python verify_leakage.py` prints (see
-[verify_leakage.py](verify_leakage.py)), not a paraphrase.
+[verify_leakage.py](verify_leakage.py)), not a paraphrase. The run above was
+produced on v0.1.0; v0.2.0 changed only validation and error paths, leaving the
+purge and embargo arithmetic the theorems describe untouched.
 
-Unit suite: `pytest tests/test_cpcv.py` → **79 passed** (incl. live-yfinance
-integration), covering counts, no-leakage, embargo, disjointness, the
+Unit suite: `pytest` → **115 tests** (incl. the live-yfinance integration test,
+which skips offline), covering counts, no-leakage, embargo, disjointness, the
 canonical (6,2) path-stitch regression, coverage, determinism, the
-`envelope == brute-force` equivalence, and all input-validation paths.
+`envelope == brute-force` equivalence, all input-validation paths, and — in
+`tests/test_sklearn.py` — the scikit-learn integration against a real install.
 
 ---
 
@@ -156,14 +170,25 @@ raw definition on ~98 years of real data across 20 datasets and 70,080 splits,
 with zero violations. The proof is constructive and dtype/calendar-agnostic
 (positions are `int64`; irregular/holiday gaps resolve through `searchsorted`).
 
-**The guarantee is conditional on the splitter's contract**, and the code now
+**The guarantee is conditional on the splitter's contract**, and the code
 enforces that contract instead of assuming it holds:
 - the index must be **unique and monotonically increasing** (else `ValueError`);
 - `t1` must cover every observation (mis-alignment raises `ValueError` instead
   of silently spanning to the end of the sample);
+- `t1` must have been built for **the sample being split**. Purging works in
+  positional space, so a `t1` built on a denser grid silently rescales every
+  label horizon and under-purges; since v0.2.0 that raises `ValueError` rather
+  than proceeding. Contiguous slices and longer histories resolve identically
+  to a rebuilt `t1` and remain permitted;
+- `X.index` and `t1` must agree on timezone-awareness (else `ValueError`);
 - leakage is defined w.r.t. the **`t1` you supply**: an understated `t1`
   (label lifespan shorter than reality) is a *modelling* error the splitter
   cannot detect.
+
+**Degenerate folds are rejected, not emitted.** Purge and embargo can consume an
+entire training set; such a fold is not a simulation, and downstream it becomes
+a `NaN` score that averaging can hide. Since v0.2.0 `split` raises when a fold
+falls below `min_train_size` (default 1); pass `min_train_size=0` to opt out.
 
 **Out of scope, deliberately:** return/PnL accounting, feature
 scaling/leakage inside the user's model pipeline, and metric annualisation. The

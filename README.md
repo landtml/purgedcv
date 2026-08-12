@@ -16,8 +16,15 @@ cv = CombinatorialPurgedCV(n_groups=6, n_test_groups=2, embargo_pct=0.01)
 scores = cross_val_score(Ridge(), X, y, cv=cv)
 ```
 
-`cv` works anywhere scikit-learn accepts a cross-validator: `cross_val_score`,
-`GridSearchCV`, `cross_validate`. No other code changes required.
+`cv` is accepted by `cross_val_score`, `cross_validate`, `GridSearchCV`,
+`RandomizedSearchCV`, `learning_curve` and `permutation_test_score`, including
+with `n_jobs > 1`. No other code changes required.
+
+`cross_val_predict` is the one exception, and it cannot be supported: it
+requires the test folds to partition the sample, while CPCV's folds overlap by
+construction — each observation is tested in `C(N-1, k-1)` simulations, which is
+what produces the multiple backtest paths. Use
+[`build_paths`](#usage) to assemble out-of-sample predictions instead.
 
 ## The problem this solves
 
@@ -27,8 +34,8 @@ later. Standard k-fold or a plain time-series split ignores this: whenever a
 training observation's label window overlaps a test observation's, the model
 sees future information during training, and that information inflates the
 reported cross-validation score above what production would ever deliver.
-This is the single most common way a backtest looks profitable in
-validation and falls apart live.
+It is a common reason a backtest looks profitable in validation and falls
+apart live.
 
 CPCV addresses this two ways. **Purging** removes any training observation
 whose label window overlaps a test window. **Embargo** additionally removes
@@ -44,10 +51,10 @@ closer to full size than a single expanding-window split would.
 CPCV is a published method. This project did not invent it. The value here
 is a fast, independently verified implementation:
 
-- **A machine-checkable proof that the purge logic is airtight**:
-  [PROOF.md](PROOF.md) states the no-leakage property as two theorems and
-  proves them from the interval-overlap definition of leakage, going beyond
-  what a test suite alone can establish.
+- **A proof of the purge logic**: [PROOF.md](PROOF.md) states the no-leakage
+  property as two theorems and proves them from the interval-overlap
+  definition of leakage. The guarantee is about the split boundary, given the
+  `t1` you supply — see [Scope](#scope) for what it does not cover.
 - **An independent empirical check of that proof against real data**:
   `verify_leakage.py` downloads decades of market history across 20
   datasets and checks the no-leakage property two different ways. One check
@@ -57,7 +64,7 @@ is a fast, independently verified implementation:
 - **A vectorized implementation**: purge and embargo reduce to a handful of
   boolean array operations per split instead of a nested loop. The splitter
   is stateless and picklable, so fitting a model across every combinatorial
-  split parallelizes cleanly with `joblib` or similar.
+  split parallelizes with `joblib` or `n_jobs > 1` (covered by the test suite).
 - **A design that structurally avoids a known implementation bug.** Several
   CPCV write-ups online compute the combinatorial backtest paths by reusing
   model predictions across paths, which silently double-counts overlapping
@@ -107,15 +114,50 @@ See the docstrings in [`src/purgedcv/_splitter.py`](src/purgedcv/_splitter.py)
 for the full parameter reference, including the two supported embargo-anchor
 conventions and their tradeoffs.
 
+### Two things the splitter refuses to do
+
+**Reuse a `t1` built for a different sample.** Purging happens in positional
+space, so resolving a `t1` against an index it wasn't built for silently
+rescales every label horizon — a 21-bar label over a halved index spans about
+10 positions, and purging then removes far less than it should. Resampling `X`
+or dropping rows after building `t1` is enough to trigger it, so a `t1` whose
+timestamps fall between `X.index` entries is rejected:
+
+```python
+t1 = make_t1(X.index, 21)
+cv = CombinatorialPurgedCV(6, 2, t1=t1)
+cv.split(X.iloc[::2])   # ValueError: t1 was built for a denser sample than X
+```
+
+Rebuild it for the data you are actually splitting: `make_t1(X_sub.index, 21)`.
+Contiguous slices and a `t1` covering a longer history are fine — both resolve
+identically to a rebuilt one.
+
+**Emit a fold with no training data.** A long horizon, a large embargo or a
+short sample can purge the entire training set. Such a fold is not a
+simulation, and passed to scikit-learn it becomes a `NaN` score that
+`np.nanmean` will happily average away. `split` raises instead, naming the
+combination and the parameters responsible:
+
+```python
+CombinatorialPurgedCV(6, 2, embargo_pct=0.01).split(X, t1=make_t1(X.index, 21))
+# ValueError: split with test groups (1, 4) retains 0 training observation(s)
+# after purge and embargo ... n_samples=126, longest label horizon=21 bars
+```
+
+Pass `min_train_size=0` to allow them, or raise it above 1 to require a
+minimum viable training set.
+
 ## Verifying the claims yourself
 
 ```bash
-pytest                  # 79 tests: correctness, edge cases, sklearn API compliance
+pytest                    # 115 tests, 14 of them against a real sklearn install
 python verify_leakage.py  # requires network + `pip install -e ".[verify]"`
 ```
 
 `verify_leakage.py` prints a certificate summarizing what it checked. A
-recent run:
+recent run, abridged (the full block also reports scenario and
+purge-equivalence counts):
 
 ```
 ======================================================================
