@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "purgedcv"
-version = "0.1.0"
+dynamic = ["version"]
 description = "Combinatorial Purged Cross-Validation with embargo for financial time series, scikit-learn compatible."
 readme = "README.md"
 license = { text = "MIT" }
@@ -33,6 +33,12 @@ Repository = "https://github.com/landtml/purgedcv"
 
 [tool.setuptools.packages.find]
 where = ["src"]
+
+[tool.setuptools.dynamic]
+version = { attr = "purgedcv.__version__" }
+
+[tool.setuptools.package-data]
+purgedcv = ["py.typed"]
 
 [tool.pytest.ini_options]
 markers = [
