@@ -445,19 +445,26 @@ class CombinatorialPurgedCV(_Base):
             is_test_group[list(combo), c] = True
             is_test[np.isin(group_labels, combo), c] = True
 
+        # Every group is a test fold in exactly C(N-1, k-1) == n_paths of the
+        # C(N, k) combinations. Check that regular-degree precondition up front:
+        # it is what makes the stitch below total, and unlike a check inside the
+        # loop it can actually fail if the combination geometry is ever changed.
+        degree = is_test_group.sum(axis=1)
+        if not (degree == n_paths).all():
+            raise RuntimeError(
+                f"path-stitch precondition violated: every group must be a test "
+                f"fold in exactly {n_paths} simulations, got {degree.tolist()}."
+            )
+
         # Stitch paths with a consume-as-you-go counter: for each path, take the
         # first not-yet-used simulation in which a group is a test fold, then mark
-        # it used. The invariant -- each group is a test fold in exactly n_paths
-        # simulations -- guarantees every (group, path) cell gets a real sim.
+        # it used. Rows never interact (``work[g, sim] = False`` touches only row
+        # ``g``), so each row simply hands out its n_paths simulations one per
+        # path -- the loop cannot run a row dry.
         work = is_test_group.copy()
         path_folds = np.full((N, n_paths), -1, dtype=np.int64)
         for p in range(n_paths):
             for g in range(N):
-                if not work[g].any():  # would silently default argmax() to 0
-                    raise RuntimeError(
-                        f"path-stitch invariant violated for group {g}: "
-                        "ran out of test simulations."
-                    )
                 sim = int(work[g].argmax())
                 path_folds[g, p] = sim
                 work[g, sim] = False
