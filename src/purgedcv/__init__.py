@@ -14,4 +14,4 @@ from __future__ import annotations
 from ._splitter import CombinatorialPurgedCV, CPCVPaths, make_t1
 
 __all__ = ["CombinatorialPurgedCV", "CPCVPaths", "make_t1"]
-__version__ = "0.1.0"
+__version__ = "0.2.0"
