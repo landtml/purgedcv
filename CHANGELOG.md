@@ -25,6 +25,10 @@ with what the code and the test suite actually do.
   embargo is enough. Such folds were yielded silently, became `NaN` scores
   inside scikit-learn, and `np.nanmean` then reported a confident number
   computed from whichever folds survived. See `min_train_size` below.
+- **`split` validates `t1` when called, not when consumed.** It is a generator,
+  so the density check above did not run until the caller pulled the first
+  fold. Anything consuming the splits (scikit-learn, `list()`, a `for` loop)
+  still raised, but `cv.split(bad_X)` on its own looked fine.
 - **Lists and tuples are no longer mistaken for labelled objects.** `list.index`
   is a method, so `hasattr(X, "index")` is `True` and a plain list failed with
   an error about a builtin method. They now split positionally, as documented.
