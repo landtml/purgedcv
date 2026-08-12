@@ -444,10 +444,17 @@ class CombinatorialPurgedCV(_Base):
         index = _sample_index(X)
         n = len(index)
         self._validate_n(n)
+        # Resolve label positions here rather than inside the generator body, so
+        # a mis-specified t1 raises when split() is called instead of lying
+        # dormant until the caller happens to consume the first fold.
+        end_pos = _end_positions(index, t1)
+        return self._iter_splits(n, index, end_pos)
 
+    def _iter_splits(
+        self, n: int, index: pd.Index, end_pos: npt.NDArray[np.int_]
+    ) -> Iterator[tuple[npt.NDArray[np.int_], npt.NDArray[np.int_]]]:
         group_labels = _make_group_labels(n, self.n_groups)
         start_pos = np.arange(n)
-        end_pos = _end_positions(index, t1)
         embargo = self._embargo_size(n)
         all_idx = np.arange(n)
 

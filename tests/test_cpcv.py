@@ -404,6 +404,15 @@ def test_stale_ctor_t1_after_dropna_raises():
         list(CombinatorialPurgedCV(6, 2, t1=t1).split(X_clean))
 
 
+def test_stale_t1_raises_eagerly_without_consuming_the_generator():
+    # split() must validate when called, not when the first fold is pulled --
+    # otherwise `cv.split(bad_X)` looks fine until something iterates it.
+    X = _frame(400)
+    cv = CombinatorialPurgedCV(6, 2, t1=make_t1(X.index, 21))
+    with pytest.raises(ValueError, match="t1"):
+        cv.split(X.iloc[::2])          # deliberately not wrapped in list()
+
+
 def test_stale_t1_would_have_leaked_but_correct_t1_does_not():
     # The guard's justification: rebuilt-for-the-subset t1 leaks nothing.
     X = _frame(400).iloc[::2]

@@ -126,7 +126,9 @@ timestamps fall between `X.index` entries is rejected:
 ```python
 t1 = make_t1(X.index, 21)
 cv = CombinatorialPurgedCV(6, 2, t1=t1)
-cv.split(X.iloc[::2])   # ValueError: t1 was built for a denser sample than X
+cv.split(X.iloc[::2])
+# ValueError: t1 was built for a denser sample than X: 199 of its timestamps
+# fall between X.index entries ...
 ```
 
 Rebuild it for the data you are actually splitting: `make_t1(X_sub.index, 21)`.
