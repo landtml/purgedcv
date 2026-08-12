@@ -291,6 +291,13 @@ class CombinatorialPurgedCV(_Base):
         themselves. A ``t1`` passed directly to :meth:`split` overrides this.
     embargo_anchor : {'label_end', 'test_end'}, default 'label_end'
         Where the forward embargo buffer is measured from (see :func:`_train_mask`).
+    min_train_size : int, default 1
+        Minimum training observations a split must retain after purge and
+        embargo. :meth:`split` raises if any combination falls below it. Long
+        horizons, large embargoes or a short sample can consume the entire
+        training set; yielding such a fold silently turns into a ``NaN`` score
+        inside sklearn, so it is rejected by default. Pass ``0`` to opt out and
+        emit degenerate folds as before.
 
     Notes
     -----
@@ -311,6 +318,7 @@ class CombinatorialPurgedCV(_Base):
         embargo_pct: float = 0.0,
         t1: pd.Series | None = None,
         embargo_anchor: str = "label_end",
+        min_train_size: int = 1,
     ):
         if n_groups < 2:
             raise ValueError(f"n_groups must be >= 2, got {n_groups!r}.")
@@ -326,11 +334,16 @@ class CombinatorialPurgedCV(_Base):
                 f"embargo_anchor must be one of {self._VALID_ANCHORS}, "
                 f"got {embargo_anchor!r}."
             )
+        if min_train_size < 0:
+            raise ValueError(
+                f"min_train_size must be >= 0, got {min_train_size!r}."
+            )
         self.n_groups = n_groups
         self.n_test_groups = n_test_groups
         self.embargo_pct = embargo_pct
         self.t1 = t1
         self.embargo_anchor = embargo_anchor
+        self.min_train_size = min_train_size
 
     # -- introspection ----------------------------------------------------- #
     def get_n_splits(self, X=None, y=None, groups=None) -> int:
@@ -346,6 +359,7 @@ class CombinatorialPurgedCV(_Base):
             f"{type(self).__name__}(n_groups={self.n_groups}, "
             f"n_test_groups={self.n_test_groups}, embargo_pct={self.embargo_pct}, "
             f"embargo_anchor={self.embargo_anchor!r}, "
+            f"min_train_size={self.min_train_size}, "
             f"t1={'set' if self.t1 is not None else None})"
         )
 
@@ -393,6 +407,19 @@ class CombinatorialPurgedCV(_Base):
             blocks = _contiguous_blocks(group_labels, combo)
             train_mask = _train_mask(start_pos, end_pos, blocks, embargo, self.embargo_anchor)
             train_mask &= ~test_mask  # never train on a test observation
+
+            n_train = int(train_mask.sum())
+            if n_train < self.min_train_size:
+                horizon = int((end_pos - start_pos).max())
+                raise ValueError(
+                    f"split with test groups {combo} retains {n_train} training "
+                    f"observation(s) after purge and embargo, below "
+                    f"min_train_size={self.min_train_size}. n_samples={n}, "
+                    f"longest label horizon={horizon} bars, embargo={embargo} bars. "
+                    f"Lengthen the sample, shorten the label horizon, reduce "
+                    f"embargo_pct or n_test_groups, or pass min_train_size=0 to "
+                    f"allow degenerate folds."
+                )
             yield all_idx[train_mask], all_idx[test_mask]
 
     # -- the path map ------------------------------------------------------ #

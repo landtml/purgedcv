@@ -433,6 +433,60 @@ def test_superset_t1_is_still_accepted():
 
 
 # --------------------------------------------------------------------------- #
+# Degenerate folds: purge + embargo can consume the entire training set        #
+# --------------------------------------------------------------------------- #
+# An empty training fold is never a meaningful simulation. Yielded silently it
+# becomes a NaN score inside sklearn, and np.nanmean then reports a confident
+# number computed from whichever folds happened to survive.
+def test_degenerate_fold_raises_by_default():
+    # 6 months of daily bars with a 21-day horizon -- an ordinary configuration.
+    X = _frame(126)
+    cv = CombinatorialPurgedCV(6, 2, embargo_pct=0.01)
+    with pytest.raises(ValueError, match="training observation"):
+        list(cv.split(X, t1=make_t1(X.index, 21)))
+
+
+def test_degenerate_fold_message_names_the_knobs():
+    X = _frame(126)
+    cv = CombinatorialPurgedCV(6, 2, embargo_pct=0.01)
+    with pytest.raises(ValueError) as exc:
+        list(cv.split(X, t1=make_t1(X.index, 21)))
+    msg = str(exc.value)
+    for token in ("test groups", "embargo", "min_train_size"):
+        assert token in msg, f"error message should mention {token!r}: {msg}"
+
+
+def test_min_train_size_zero_restores_legacy_behaviour():
+    X = _frame(126)
+    cv = CombinatorialPurgedCV(6, 2, embargo_pct=0.01, min_train_size=0)
+    sizes = [len(tr) for tr, _ in cv.split(X, t1=make_t1(X.index, 21))]
+    assert min(sizes) == 0          # the degenerate fold is still yielded
+    assert len(sizes) == cv.get_n_splits()
+
+
+def test_min_train_size_enforces_a_floor():
+    X = _frame(500)
+    t1 = make_t1(X.index, 21)
+    ok = [len(tr) for tr, _ in CombinatorialPurgedCV(6, 2).split(X, t1=t1)]
+    cv = CombinatorialPurgedCV(6, 2, min_train_size=min(ok) + 1)
+    with pytest.raises(ValueError, match="training observation"):
+        list(cv.split(X, t1=t1))
+
+
+def test_healthy_config_is_unaffected():
+    X = _frame(2000)
+    cv = CombinatorialPurgedCV(6, 2, embargo_pct=0.01)
+    sizes = [len(tr) for tr, _ in cv.split(X, t1=make_t1(X.index, 21))]
+    assert len(sizes) == cv.get_n_splits()
+    assert min(sizes) > 0
+
+
+def test_min_train_size_rejects_negative():
+    with pytest.raises(ValueError):
+        CombinatorialPurgedCV(6, 2, min_train_size=-1)
+
+
+# --------------------------------------------------------------------------- #
 # Fix 4: combine() shape hardening                                             #
 # --------------------------------------------------------------------------- #
 def test_combine_rejects_non_2d():
