@@ -367,6 +367,72 @@ def test_make_t1_rejects_unsorted_and_duplicate_index():
 
 
 # --------------------------------------------------------------------------- #
+# Stale t1: a t1 built for a different X must never be applied silently        #
+# --------------------------------------------------------------------------- #
+# A t1 is a map from event start to event end, but purging works in *positional*
+# space. Resolving a t1 against an index it was not built for silently rescales
+# every label horizon -- a 21-bar label over a halved index spans ~10 positions --
+# so purge removes far less than it should. That is exactly the leakage this
+# library exists to prevent, so a mismatched t1 is rejected rather than reindexed.
+def _leaking_pairs(X, t1, cv):
+    """Count train/test label-interval overlaps, judged against the true t1."""
+    start = np.arange(len(X))
+    end = _end_positions(X.index, t1)
+    total = 0
+    for train_idx, test_idx in cv.split(X, t1=t1):
+        ts0, te0 = start[test_idx], end[test_idx]
+        tr0, tr1 = start[train_idx], end[train_idx]
+        total += int(((tr1[:, None] >= ts0[None, :]) & (tr0[:, None] <= te0[None, :])).sum())
+    return total
+
+
+def test_stale_ctor_t1_on_subsampled_X_raises():
+    # The dangerous case: t1 built on the full index, split on a resampled subset.
+    X = _frame(400)
+    cv = CombinatorialPurgedCV(6, 2, t1=make_t1(X.index, 21))
+    with pytest.raises(ValueError, match="t1"):
+        list(cv.split(X.iloc[::2]))
+
+
+def test_stale_ctor_t1_after_dropna_raises():
+    # dropna() is ordinary preprocessing; reusing a pre-dropna t1 leaves interior
+    # gaps in t1.index, which is the resampling signature the guard rejects.
+    X = _frame(300)
+    t1 = make_t1(X.index, 21)
+    X_clean = X.drop(X.index[50:80])
+    with pytest.raises(ValueError, match="t1"):
+        list(CombinatorialPurgedCV(6, 2, t1=t1).split(X_clean))
+
+
+def test_stale_t1_would_have_leaked_but_correct_t1_does_not():
+    # The guard's justification: rebuilt-for-the-subset t1 leaks nothing.
+    X = _frame(400).iloc[::2]
+    cv = CombinatorialPurgedCV(6, 2, embargo_pct=0.0)
+    assert _leaking_pairs(X, make_t1(X.index, 21), cv) == 0
+
+
+# Contiguous slices are provably safe: shared timestamps keep their relative
+# positions and tail labels clip identically, so end_pos is bit-for-bit equal to
+# a rebuilt t1. Rejecting them would break nested CV over contiguous folds.
+@pytest.mark.parametrize("sl", [slice(None, 200), slice(100, 300), slice(200, None)])
+def test_contiguous_slice_with_original_t1_is_accepted(sl):
+    X = _frame(400)
+    t1 = make_t1(X.index, 21)
+    X_sub = X.iloc[sl]
+    got = _end_positions(X_sub.index, t1)
+    want = _end_positions(X_sub.index, make_t1(X_sub.index, 21))
+    np.testing.assert_array_equal(got, want)
+
+
+def test_superset_t1_is_still_accepted():
+    # A t1 covering a longer history than X is unambiguous on X's own grid.
+    X = _frame(400)
+    t1_big = make_t1(_daily_index(600), 21)
+    splits = list(CombinatorialPurgedCV(6, 2).split(X, t1=t1_big))
+    assert len(splits) == 15
+
+
+# --------------------------------------------------------------------------- #
 # Fix 4: combine() shape hardening                                             #
 # --------------------------------------------------------------------------- #
 def test_combine_rejects_non_2d():

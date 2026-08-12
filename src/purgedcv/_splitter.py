@@ -109,17 +109,46 @@ def _end_positions(index: pd.Index, t1: pd.Series | None) -> npt.NDArray[np.int_
     Raises
     ------
     ValueError
-        If ``index`` is not strictly increasing/unique, or if ``t1`` does not
-        provide an event-end for every observation in ``index`` (silent
-        misalignment is a leakage hazard, so it is rejected, not patched).
+        If ``index`` is not strictly increasing/unique, if ``t1`` covers only
+        part of ``index``, or if ``t1`` was built for a *larger* index than the
+        one being split (silent misalignment is a leakage hazard, so it is
+        rejected, not patched).
     """
     n = len(index)
     if t1 is None:
         return np.arange(n)
+    if not isinstance(t1, pd.Series):
+        raise TypeError(
+            f"t1 must be a pandas Series mapping event start -> event end; "
+            f"got {type(t1).__name__}. Build one with purgedcv.make_t1()."
+        )
     if not index.is_monotonic_increasing:
         raise ValueError("X.index must be sorted ascending for purge/embargo.")
     if not index.is_unique:
         raise ValueError("X.index must be unique for purge/embargo.")
+
+    if t1.index.has_duplicates:
+        raise ValueError("t1.index must be unique for purge/embargo.")
+
+    # A t1 built for a *denser* sample is the dangerous case. Purging happens in
+    # positional space, so if X was resampled out of the grid t1 was built on,
+    # every label horizon silently shrinks (a 21-bar label over a halved index
+    # spans ~10 positions) and purge removes far less than it should. Extra t1
+    # timestamps falling strictly *inside* the span of X.index are the signature
+    # of exactly that; extra timestamps outside the span (a longer history, or a
+    # contiguous slice of it) resolve identically and stay allowed.
+    if not t1.index.equals(index):
+        interior = t1.index[(t1.index > index[0]) & (t1.index < index[-1])]
+        n_gap = len(interior.difference(index))
+        if n_gap:
+            raise ValueError(
+                f"t1 was built for a denser sample than X: {n_gap} of its "
+                f"timestamps fall between X.index entries, so X.index appears to "
+                f"be a resampled subset of the grid t1 was built on. Resolving it "
+                f"here would rescale every label horizon into the wrong positional "
+                f"space and under-purge (a silent leakage hazard). Rebuild t1 for "
+                f"this X, e.g. make_t1(X.index, horizon)."
+            )
 
     aligned = t1.reindex(index)
     if aligned.isna().any():
