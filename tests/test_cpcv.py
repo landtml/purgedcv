@@ -487,6 +487,59 @@ def test_min_train_size_rejects_negative():
 
 
 # --------------------------------------------------------------------------- #
+# Input handling and error quality                                             #
+# --------------------------------------------------------------------------- #
+@pytest.mark.parametrize("X", [
+    [[1.0]] * 120,                       # list: list.index is a METHOD, not an index
+    tuple([[1.0]] * 120),                # same trap via tuple.index
+    np.zeros((120, 2)),                  # documented "array-like"
+])
+def test_unlabelled_array_likes_split_positionally(X):
+    splits = list(CombinatorialPurgedCV(6, 2).split(X))
+    assert len(splits) == 15
+    assert sum(len(te) for _, te in splits) == 120 * 5  # each obs tested n_paths times
+
+
+def test_non_sized_input_raises_typeerror():
+    with pytest.raises(TypeError, match="array-like"):
+        list(CombinatorialPurgedCV(6, 2).split(object()))
+
+
+def test_tz_aware_index_with_naive_t1_raises_clearly():
+    idx = pd.date_range("2020-01-01", periods=120, freq="B", tz="UTC")
+    X = pd.DataFrame({"f": np.zeros(120)}, index=idx)
+    t1 = pd.Series(idx.tz_localize(None), index=idx)
+    with pytest.raises(ValueError, match="timezone-aware"):
+        list(CombinatorialPurgedCV(6, 2).split(X, t1=t1))
+
+
+def test_tz_aware_index_with_matching_t1_works():
+    idx = pd.date_range("2020-01-01", periods=120, freq="B", tz="UTC")
+    X = pd.DataFrame({"f": np.zeros(120)}, index=idx)
+    assert len(list(CombinatorialPurgedCV(6, 2).split(X, t1=make_t1(idx, 5)))) == 15
+
+
+def test_t1_must_be_a_series():
+    X = _frame(120)
+    with pytest.raises(TypeError, match="Series"):
+        list(CombinatorialPurgedCV(6, 2).split(X, t1=np.arange(120)))
+
+
+def test_passing_groups_warns_that_it_is_ignored():
+    X = _frame(120)
+    with pytest.warns(UserWarning, match="never used"):
+        list(CombinatorialPurgedCV(6, 2).split(X, groups=np.zeros(120)))
+
+
+def test_last_group_absorbs_the_remainder():
+    # Documented bound: last group has n//N + n%N observations.
+    labels = _make_group_labels(29, 10)
+    sizes = np.bincount(labels)
+    assert sizes[-1] == 29 // 10 + 29 % 10
+    assert (sizes[:-1] == 29 // 10).all()
+
+
+# --------------------------------------------------------------------------- #
 # Fix 4: combine() shape hardening                                             #
 # --------------------------------------------------------------------------- #
 def test_combine_rejects_non_2d():

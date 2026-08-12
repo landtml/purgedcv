@@ -35,6 +35,7 @@ from __future__ import annotations
 
 import itertools
 import math
+import warnings
 from dataclasses import dataclass
 from typing import Iterator
 
@@ -98,6 +99,25 @@ def _make_group_labels(n_samples: int, n_groups: int) -> npt.NDArray[np.int_]:
     return labels
 
 
+def _sample_index(X) -> pd.Index:
+    """Return the index to split on: ``X.index`` for pandas, positions otherwise.
+
+    ``hasattr(X, "index")`` is not a usable test here -- ``list.index`` and
+    ``tuple.index`` are *methods*, so a plain list would be mistaken for a
+    labelled object and fail later with an opaque error about a builtin method.
+    """
+    if isinstance(X, (pd.DataFrame, pd.Series)):
+        return X.index
+    try:
+        n = X.shape[0] if hasattr(X, "shape") else len(X)
+    except TypeError as exc:  # sparse matrices, generators, ...
+        raise TypeError(
+            f"X must be a pandas DataFrame/Series or an array-like with a "
+            f"length; got {type(X).__name__}."
+        ) from exc
+    return pd.RangeIndex(n)
+
+
 def _end_positions(index: pd.Index, t1: pd.Series | None) -> npt.NDArray[np.int_]:
     """Map every observation's event-end time (``t1``) to a positional index.
 
@@ -156,6 +176,17 @@ def _end_positions(index: pd.Index, t1: pd.Series | None) -> npt.NDArray[np.int_
             "t1 must provide an event-end time for every observation in X.index; "
             "found unaligned/missing entries after reindexing onto X.index."
         )
+    # searchsorted raises an opaque "Cannot compare tz-naive and tz-aware" from
+    # deep inside pandas; a mismatch here is a data-prep error worth naming.
+    index_tz = getattr(index, "tz", None)
+    t1_tz = getattr(getattr(aligned, "dt", None), "tz", None)
+    if (index_tz is None) != (t1_tz is None):
+        raise ValueError(
+            f"X.index and t1 must both be timezone-aware or both naive; got "
+            f"X.index tz={index_tz!r} and t1 tz={t1_tz!r}. Align them with "
+            f"tz_localize()/tz_convert() before splitting."
+        )
+
     pos = index.searchsorted(aligned.to_numpy(), side="left")
     end_pos = np.clip(pos, 0, n - 1).astype(np.int64)
     # An event end cannot precede its own start position.
@@ -306,7 +337,13 @@ class CombinatorialPurgedCV(_Base):
     group serves as a test fold.
 
     Groups are equal-sized by count, with any remainder folded into the last
-    group; if ``n_groups`` does not divide ``n_samples`` the final group is larger.
+    group (the AFML convention). The last group therefore holds
+    ``n_samples // n_groups + n_samples % n_groups`` observations -- up to
+    ``n_groups - 1`` more than the others, so it can approach twice their size
+    when ``n_samples`` is close to ``n_groups``. At realistic sample sizes the
+    skew is negligible (~4% at ``n_samples=2519, n_groups=10``), but it is worth
+    keeping ``n_samples`` well above ``n_groups`` so the last test fold is not
+    disproportionately large.
     """
 
     _VALID_ANCHORS = ("label_end", "test_end")
@@ -383,16 +420,28 @@ class CombinatorialPurgedCV(_Base):
         ----------
         X : array-like or DataFrame
             Samples; only its length and (if ``t1`` is given) its ``.index`` are used.
-        y, groups : ignored
+        y : ignored
             Present for sklearn API compatibility (``split(X, y, groups)``).
+        groups : ignored
+            Accepted for sklearn API compatibility but never consulted, unlike
+            ``GroupKFold``: the groups here are contiguous *time* blocks derived
+            from ``n_groups``. Passing a non-``None`` value warns.
         t1 : pd.Series, optional
             Event-lifespan series mapping each sample's start time to its
             event-end time (see :func:`make_t1`). Falls back to the ``t1`` given to
             the constructor. If both are ``None``, each observation spans a single
             bar and purging only removes the test indices themselves.
         """
+        if groups is not None:
+            warnings.warn(
+                "groups is accepted for sklearn API compatibility but is never "
+                "used: CombinatorialPurgedCV forms its own contiguous time "
+                "groups from n_groups. Pass t1 to control label lifespans.",
+                UserWarning,
+                stacklevel=2,
+            )
         t1 = self.t1 if t1 is None else t1
-        index = X.index if hasattr(X, "index") else pd.RangeIndex(len(X))
+        index = _sample_index(X)
         n = len(index)
         self._validate_n(n)
 
@@ -429,7 +478,7 @@ class CombinatorialPurgedCV(_Base):
         ``t1`` is accepted for API symmetry; the path map depends only on the
         group geometry, not on the event lifespans.
         """
-        index = X.index if hasattr(X, "index") else pd.RangeIndex(len(X))
+        index = _sample_index(X)
         n = len(index)
         self._validate_n(n)
 
