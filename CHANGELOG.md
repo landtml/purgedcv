@@ -21,7 +21,7 @@ with what the code and the test suite actually do.
   slices and longer histories resolve identically to a rebuilt `t1` and are
   still accepted.
 - **Raise on degenerate training folds.** Purge and embargo can consume an
-  entire training set — 6 months of daily bars with a 21-day horizon and a 1%
+  entire training set -- 6 months of daily bars with a 21-day horizon and a 1%
   embargo is enough. Such folds were yielded silently, became `NaN` scores
   inside scikit-learn, and `np.nanmean` then reported a confident number
   computed from whichever folds survived. See `min_train_size` below.
@@ -42,7 +42,7 @@ with what the code and the test suite actually do.
   fold must retain after purge and embargo. `split` raises below it, naming the
   combination, sample size, horizon and embargo. Pass `0` for the previous
   behaviour.
-- `tests/test_sklearn.py`: 14 tests against a real scikit-learn install —
+- `tests/test_sklearn.py`: 14 tests against a real scikit-learn install --
   `cross_val_score`, `cross_validate`, `GridSearchCV`, `RandomizedSearchCV`,
   `Pipeline`, `learning_curve`, `permutation_test_score`, `n_jobs=2` and a
   pickle roundtrip. The suite previously imported scikit-learn nowhere and

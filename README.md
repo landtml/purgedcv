@@ -22,7 +22,7 @@ with `n_jobs > 1`. No other code changes required.
 
 `cross_val_predict` is the one exception, and it cannot be supported: it
 requires the test folds to partition the sample, while CPCV's folds overlap by
-construction — each observation is tested in `C(N-1, k-1)` simulations, which is
+construction -- each observation is tested in `C(N-1, k-1)` simulations, which is
 what produces the multiple backtest paths. Use
 [`build_paths`](#usage) to assemble out-of-sample predictions instead.
 
@@ -54,7 +54,7 @@ is a fast, independently verified implementation:
 - **A proof of the purge logic**: [PROOF.md](PROOF.md) states the no-leakage
   property as two theorems and proves them from the interval-overlap
   definition of leakage. The guarantee is about the split boundary, given the
-  `t1` you supply — see [Scope](#scope) for what it does not cover.
+  `t1` you supply -- see [Scope](#scope) for what it does not cover.
 - **An independent empirical check of that proof against real data**:
   `verify_leakage.py` downloads decades of market history across 20
   datasets and checks the no-leakage property two different ways. One check
@@ -118,7 +118,7 @@ conventions and their tradeoffs.
 
 **Reuse a `t1` built for a different sample.** Purging happens in positional
 space, so resolving a `t1` against an index it wasn't built for silently
-rescales every label horizon — a 21-bar label over a halved index spans about
+rescales every label horizon -- a 21-bar label over a halved index spans about
 10 positions, and purging then removes far less than it should. Resampling `X`
 or dropping rows after building `t1` is enough to trigger it, so a `t1` whose
 timestamps fall between `X.index` entries is rejected:
@@ -132,7 +132,7 @@ cv.split(X.iloc[::2])
 ```
 
 Rebuild it for the data you are actually splitting: `make_t1(X_sub.index, 21)`.
-Contiguous slices and a `t1` covering a longer history are fine — both resolve
+Contiguous slices and a `t1` covering a longer history are fine -- both resolve
 identically to a rebuilt one.
 
 **Emit a fold with no training data.** A long horizon, a large embargo or a

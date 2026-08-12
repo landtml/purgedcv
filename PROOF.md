@@ -100,7 +100,7 @@ per group per path, so every observation is predicted out-of-sample in exactly
 The stitch is total by construction: it clears the consumed simulation from one
 group's row only, so rows never interact, and each row starts with exactly
 `n_paths` candidates and hands out one per path. `build_paths` checks that
-regular-degree precondition before stitching — that is the assumption the
+regular-degree precondition before stitching -- that is the assumption the
 argument rests on, and it is what would break if the combination geometry ever
 changed. (Through v0.1.0 the check sat *inside* the stitch loop, where the
 row-independence argument above made it unreachable.)
@@ -156,8 +156,8 @@ purge and embargo arithmetic the theorems describe untouched.
 Unit suite: `pytest` → **115 tests** (incl. the live-yfinance integration test,
 which skips offline), covering counts, no-leakage, embargo, disjointness, the
 canonical (6,2) path-stitch regression, coverage, determinism, the
-`envelope == brute-force` equivalence, all input-validation paths, and — in
-`tests/test_sklearn.py` — the scikit-learn integration against a real install.
+`envelope == brute-force` equivalence, all input-validation paths, and -- in
+`tests/test_sklearn.py` -- the scikit-learn integration against a real install.
 
 ---
 
