@@ -1,4 +1,17 @@
-# purgedcv
+<div align="center">
+
+<img src="docs/banner.svg" alt="purgedcv: the test block sweeping across a timeline, with purged and embargoed bars beside it" width="640">
+
+<br>
+
+[![CI](https://github.com/landtml/purgedcv/actions/workflows/ci.yml/badge.svg)](https://github.com/landtml/purgedcv/actions/workflows/ci.yml)
+[![Python](https://img.shields.io/badge/python-3.10%20%E2%80%93%203.14-blue)](https://github.com/landtml/purgedcv)
+[![License: MIT](https://img.shields.io/badge/license-MIT-green)](LICENSE)
+[![Proof](https://img.shields.io/badge/no--leakage-proved%20%2B%20verified-6f42c1)](PROOF.md)
+
+**Cross-validation for time series where the label outlives the bar it sits on.**
+
+</div>
 
 Combinatorial Purged Cross-Validation (CPCV) with embargo, for time series
 where the standard train/test split leaks information across the boundary.
