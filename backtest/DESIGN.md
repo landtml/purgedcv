@@ -82,7 +82,7 @@ Depth before breadth. Each layer ships with its planted-flaw tests.
 
 1. Statistics + trial log (F4, F7). **Done.**
 2. Engine core: conventions, cost/carry/sizing interfaces, vectorised engine,
-   CPCV path returns, falsification harness (F1, F2, F3, F5, F6).
+   CPCV path returns, falsification harness (F1, F2, F3, F5, F6). **Done.**
 3. Research-session integrity: persistent ledger, vault, point-in-time
    universe (F8, F9).
 4. Path and regime analytics (F10).
