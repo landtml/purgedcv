@@ -40,6 +40,7 @@ from .market import (
     Calendar,
     Instrument,
 )
+from .report import SCHEMA, build_report, write_report
 from .sizing import ProbabilitySizer, SignSizer, Sizer
 from .stats import (
     PBOResult,
@@ -57,6 +58,9 @@ from .trials import Trial, TrialLog
 __version__ = "0.0.2"
 
 __all__ = [
+    "SCHEMA",
+    "build_report",
+    "write_report",
     "AssetClass",
     "BorrowCarry",
     "CRYPTO_DAILY",

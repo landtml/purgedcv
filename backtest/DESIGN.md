@@ -87,6 +87,9 @@ Depth before breadth. Each layer ships with its planted-flaw tests.
    universe (F8, F9).
 4. Path and regime analytics (F10).
 5. Event-driven engine and parity (F11); the verdict-first report and
-   dashboard.
+   dashboard. A first version was pulled forward: `report.py` fixes the
+   JSON contract (`purgedcv-backtest/report@1`) and `dashboard/` is a
+   TypeScript viewer for it. Later layers add sections to the contract;
+   the viewer never computes statistics itself.
 6. Breadth: asset-class model packs, data adapters, Rust kernels for the
    hot paths.

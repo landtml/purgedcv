@@ -110,6 +110,32 @@ markets where the truth is known:
   positions. Training rows filled with NaN are never read.
 - The tests were mutation-checked: disabling each guard makes its test fail.
 
+## Dashboard
+
+A verdict-first dashboard in TypeScript (Vite, no runtime dependencies)
+lives in [`dashboard/`](dashboard/). Python writes one JSON report; the
+dashboard reads it.
+
+```python
+report = pb.build_report(verdict=verdict, trials=log, paths=paths, title="My strategy")
+pb.write_report("backtest/dashboard/public/report.json", report)
+```
+
+```bash
+python backtest/examples/demo_report.py   # or write your own report as above
+cd backtest/dashboard
+npm install
+npm run dev                               # opens http://localhost:5173/dashboard/
+```
+
+It shows the findings first, then the headline statistics (PSR, DSR, PBO,
+break-even cost, MinTRL), then the evidence: equity and drawdown, the
+permutation null, the lag profile, the cost curve, every CPCV path, and
+every recorded trial. `npm run export` writes `dist/report.html`, one
+self-contained file that opens without a server. The report format
+(`purgedcv-backtest/report@1`) is documented in
+[`report.py`](src/purgedcv_backtest/report.py).
+
 ## Roadmap (bottom-up)
 
 Depth before breadth; the full failure-pattern catalogue is in
@@ -121,5 +147,5 @@ Depth before breadth; the full failure-pattern catalogue is in
 | 2 | Engine core, cost/carry/sizing models, CPCV path returns, falsification harness (**done**) | F1, F2, F3, F5, F6 |
 | 3 | Research-session integrity: persistent ledger, sealed holdout vault, point-in-time universe | F8 iterating until it works, F9 survivorship |
 | 4 | Path and regime analytics | F10 regime dependence |
-| 5 | Event-driven engine with vectorised parity; verdict-first report and dashboard | F11 engine error |
+| 5 | Event-driven engine with vectorised parity; full report and dashboard (a first dashboard ships now) | F11 engine error |
 | 6 | Breadth: asset-class model packs, data adapters, Rust kernels for hot paths | |
