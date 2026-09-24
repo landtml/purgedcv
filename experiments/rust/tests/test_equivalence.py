@@ -94,3 +94,23 @@ def test_picklable_and_sklearn_compatible():
     cv = pickle.loads(pickle.dumps(cv))
     scores = cross_val_score(Ridge(), X, y, cv=cv, n_jobs=2)
     assert len(scores) == cv.get_n_splits() and np.isfinite(scores).all()
+
+
+@pytest.mark.parametrize(
+    "X",
+    [np.zeros((50, 2)), list(range(50)), pd.Series(np.zeros(50))],
+    ids=["ndarray", "list", "series-rangeindex"],
+)
+@pytest.mark.parametrize("n_groups,n_test", [(2, 1), (5, 4), (50, 49), (50, 1)])
+def test_edge_shapes_match(X, n_groups, n_test):
+    kw = dict(n_groups=n_groups, n_test_groups=n_test, embargo_pct=0.5, min_train_size=0)
+    py = purgedcv.CombinatorialPurgedCV(**kw)
+    rs = purgedcv_rs.CombinatorialPurgedCV(**kw)
+    _assert_same_splits(py.split(X), rs.split(X))
+
+
+def test_huge_embargo_on_raw_plan_saturates():
+    plan = purgedcv_rs.SplitPlan(np.arange(10), 2, 2**64 - 1)
+    train, test = plan.split([0])
+    assert train.size == 0
+    np.testing.assert_array_equal(test, np.arange(5))

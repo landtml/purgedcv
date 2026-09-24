@@ -49,13 +49,50 @@ impl SplitPlan {
         self.bounds.len() - 1
     }
 
-    fn check_combo(&self, combo: &[usize]) -> PyResult<()> {
+    /// Validate and build a plan; see the Python constructor for the contract.
+    fn build(
+        raw: &[i64],
+        n_groups: usize,
+        embargo: usize,
+        anchor_label_end: bool,
+    ) -> Result<Self, String> {
+        let n = raw.len();
+        if n_groups < 2 || n < n_groups {
+            return Err(format!(
+                "need 2 <= n_groups <= n_samples; got n_groups={n_groups}, n_samples={n}"
+            ));
+        }
+        let mut end = Vec::with_capacity(n);
+        for (i, &e) in raw.iter().enumerate() {
+            match usize::try_from(e) {
+                Ok(e) if i <= e && e < n => end.push(e),
+                _ => {
+                    return Err(format!(
+                        "end_pos[{i}] = {e} violates i <= end_pos[i] < n_samples={n}"
+                    ));
+                }
+            }
+        }
+        let block = n / n_groups;
+        let mut bounds: Vec<usize> = (0..n_groups).map(|g| g * block).collect();
+        bounds.push(n);
+        let monotone = end.windows(2).all(|w| w[0] <= w[1]);
+        Ok(Self {
+            end_pos: end,
+            bounds,
+            embargo,
+            anchor_label_end,
+            monotone,
+        })
+    }
+
+    fn check_combo(&self, combo: &[usize]) -> Result<(), String> {
         let sorted = combo.windows(2).all(|w| w[0] < w[1]);
         if combo.is_empty() || !sorted || combo[combo.len() - 1] >= self.n_groups() {
-            return Err(PyValueError::new_err(format!(
+            return Err(format!(
                 "combo must be non-empty, strictly increasing and < n_groups={}; got {combo:?}",
                 self.n_groups()
-            )));
+            ));
         }
         Ok(())
     }
@@ -101,7 +138,9 @@ impl SplitPlan {
                 b1 - 1
             };
             let lo = anchor + 1;
-            let hi = (lo + self.embargo).min(n);
+            // Saturating: `embargo` comes from Python unchecked, and a wrapping
+            // add in release builds would silently shrink the embargo window.
+            let hi = lo.saturating_add(self.embargo).min(n);
             if lo < hi {
                 out.push((lo, hi));
             }
@@ -190,35 +229,8 @@ impl SplitPlan {
         embargo: usize,
         anchor_label_end: bool,
     ) -> PyResult<Self> {
-        let raw = end_pos.as_slice()?;
-        let n = raw.len();
-        if n_groups < 2 || n < n_groups {
-            return Err(PyValueError::new_err(format!(
-                "need 2 <= n_groups <= n_samples; got n_groups={n_groups}, n_samples={n}"
-            )));
-        }
-        let mut end = Vec::with_capacity(n);
-        for (i, &e) in raw.iter().enumerate() {
-            match usize::try_from(e) {
-                Ok(e) if i <= e && e < n => end.push(e),
-                _ => {
-                    return Err(PyValueError::new_err(format!(
-                        "end_pos[{i}] = {e} violates i <= end_pos[i] < n_samples={n}"
-                    )));
-                }
-            }
-        }
-        let block = n / n_groups;
-        let mut bounds: Vec<usize> = (0..n_groups).map(|g| g * block).collect();
-        bounds.push(n);
-        let monotone = end.windows(2).all(|w| w[0] <= w[1]);
-        Ok(Self {
-            end_pos: end,
-            bounds,
-            embargo,
-            anchor_label_end,
-            monotone,
-        })
+        Self::build(end_pos.as_slice()?, n_groups, embargo, anchor_label_end)
+            .map_err(PyValueError::new_err)
     }
 
     /// Whether the O(k log n) interval path applies (non-decreasing end_pos).
@@ -229,7 +241,7 @@ impl SplitPlan {
 
     /// `(train_idx, test_idx)` for one combination of test groups.
     fn split<'py>(&self, py: Python<'py>, combo: Vec<usize>) -> PyResult<Bound<'py, PyTuple>> {
-        self.check_combo(&combo)?;
+        self.check_combo(&combo).map_err(PyValueError::new_err)?;
         let result = py.detach(|| self.compute(&combo));
         to_py(py, result)
     }
@@ -240,7 +252,10 @@ impl SplitPlan {
         py: Python<'py>,
         combos: Vec<Vec<usize>>,
     ) -> PyResult<Vec<Bound<'py, PyTuple>>> {
-        combos.iter().try_for_each(|c| self.check_combo(c))?;
+        combos
+            .iter()
+            .try_for_each(|c| self.check_combo(c))
+            .map_err(PyValueError::new_err)?;
         let results: Vec<Split> =
             py.detach(|| combos.par_iter().map(|c| self.compute(c)).collect());
         results.into_iter().map(|r| to_py(py, r)).collect()
@@ -256,6 +271,7 @@ fn _engine(m: &Bound<'_, PyModule>) -> PyResult<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use proptest::prelude::*;
 
     #[test]
     fn complement_merges_overlaps() {
@@ -265,5 +281,124 @@ mod tests {
         );
         assert_eq!(complement(vec![(0, 9)], 9), Vec::<i64>::new());
         assert_eq!(complement(vec![], 3), vec![0, 1, 2]);
+    }
+
+    #[test]
+    fn huge_embargo_saturates_instead_of_wrapping() {
+        let end: Vec<i64> = (0..10).collect();
+        let plan = SplitPlan::build(&end, 2, usize::MAX, true).unwrap();
+        let (train, test) = plan.compute(&[0]);
+        assert!(train.is_empty());
+        assert_eq!(test, vec![0, 1, 2, 3, 4]);
+    }
+
+    #[test]
+    fn build_rejects_broken_preconditions() {
+        assert!(SplitPlan::build(&[0, 1, 2], 4, 0, true).is_err());
+        assert!(SplitPlan::build(&[0, 1, 2], 1, 0, true).is_err());
+        assert!(SplitPlan::build(&[1, 0, 2], 2, 0, true).is_err());
+        assert!(SplitPlan::build(&[0, 1, 3], 2, 0, true).is_err());
+        assert!(SplitPlan::build(&[-1, 1, 2], 2, 0, true).is_err());
+        let plan = SplitPlan::build(&[0, 1, 2, 3], 2, 0, true).unwrap();
+        assert!(plan.check_combo(&[]).is_err());
+        assert!(plan.check_combo(&[1, 0]).is_err());
+        assert!(plan.check_combo(&[0, 0]).is_err());
+        assert!(plan.check_combo(&[2]).is_err());
+        assert!(plan.check_combo(&[0, 1]).is_ok());
+    }
+
+    /// Brute-force reference, written from the leakage definition rather than
+    /// from the kernel: an observation is test if its group is selected;
+    /// otherwise it is dropped if its label interval `[i, end[i]]` intersects
+    /// any test observation's label interval (purge, checked pair by pair --
+    /// no envelope shortcut), or if it starts inside a block's forward embargo
+    /// `(anchor, anchor + embargo]`.
+    fn oracle(
+        end: &[usize],
+        n_groups: usize,
+        combo: &[usize],
+        embargo: usize,
+        anchor_label_end: bool,
+    ) -> Split {
+        let n = end.len();
+        let block = n / n_groups;
+        let group = |i: usize| (i / block).min(n_groups - 1);
+        let is_test: Vec<bool> = (0..n).map(|i| combo.contains(&group(i))).collect();
+
+        // Maximal runs of test positions, inclusive.
+        let mut runs: Vec<(usize, usize)> = Vec::new();
+        for i in (0..n).filter(|&i| is_test[i]) {
+            match runs.last_mut() {
+                Some(r) if r.1 + 1 == i => r.1 = i,
+                _ => runs.push((i, i)),
+            }
+        }
+
+        let mut train = Vec::new();
+        for i in (0..n).filter(|&i| !is_test[i]) {
+            let purged = (0..n)
+                .filter(|&j| is_test[j])
+                .any(|j| i <= end[j] && j <= end[i]);
+            let embargoed = runs.iter().any(|&(b0, b1)| {
+                let label_end = (b0..=b1).map(|j| end[j]).max().unwrap();
+                let anchor = if anchor_label_end { label_end } else { b1 };
+                i > anchor && i - anchor <= embargo
+            });
+            if !purged && !embargoed {
+                train.push(i as i64);
+            }
+        }
+        let test = (0..n).filter(|&i| is_test[i]).map(|i| i as i64).collect();
+        (train, test)
+    }
+
+    /// A random problem: end positions (monotone or arbitrary), a group
+    /// count, one valid combination of test groups, embargo and anchor.
+    fn problem() -> impl Strategy<Value = (Vec<usize>, usize, Vec<usize>, usize, bool)> {
+        (2usize..8, 0usize..60, any::<bool>())
+            .prop_flat_map(|(n_groups, extra, monotone)| {
+                let n = n_groups + extra;
+                let horizons = prop::collection::vec(0usize..=n, n);
+                let combo =
+                    prop::sample::subsequence((0..n_groups).collect::<Vec<_>>(), 1..n_groups);
+                let embargo = prop_oneof![Just(0usize), 0usize..=n + 2, Just(usize::MAX)];
+                (
+                    Just(n),
+                    Just(n_groups),
+                    horizons,
+                    Just(monotone),
+                    combo,
+                    embargo,
+                    any::<bool>(),
+                )
+            })
+            .prop_map(
+                |(n, n_groups, horizons, monotone, combo, embargo, anchor)| {
+                    let mut end: Vec<usize> =
+                        (0..n).map(|i| (i + horizons[i]).min(n - 1)).collect();
+                    if monotone {
+                        for i in 1..n {
+                            end[i] = end[i].max(end[i - 1]);
+                        }
+                    }
+                    (end, n_groups, combo, embargo, anchor)
+                },
+            )
+    }
+
+    proptest! {
+        #![proptest_config(ProptestConfig::with_cases(4000))]
+
+        #[test]
+        fn kernel_matches_bruteforce_oracle(
+            (end, n_groups, combo, embargo, anchor) in problem()
+        ) {
+            let raw: Vec<i64> = end.iter().map(|&e| e as i64).collect();
+            let plan = SplitPlan::build(&raw, n_groups, embargo, anchor).unwrap();
+            prop_assert_eq!(
+                plan.compute(&combo),
+                oracle(&end, n_groups, &combo, embargo, anchor)
+            );
+        }
     }
 }

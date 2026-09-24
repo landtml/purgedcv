@@ -1,0 +1,9 @@
+# Seeds for failure cases proptest has generated in the past. It is
+# automatically read and these particular cases re-run before any
+# novel cases are generated.
+#
+# It is recommended to check this file in to source control so that
+# everyone who runs the test benefits from these saved cases.
+cc f6c6d594bbbd14e4173a0415ab8259dae24e7cf9a594ed5423a1bfef2fb951b6 # shrinks to (end, n_groups, combo, embargo, anchor) = ([3, 2, 2, 3], 2, [1], 0, false)
+cc a940a827e8cb231c3d0a15f30cf30c4401993ac3cfed6f2ad09f1e008cc143a0 # shrinks to (end, n_groups, combo, embargo, anchor) = ([1, 1], 2, [1], 0, false)
+cc ccefb45f61cf603b9fb72748ba75c9a5ac5985e02baaf7bb844e2dc7e45d369c # shrinks to (end, n_groups, combo, embargo, anchor) = ([0, 1], 2, [0], 1, false)

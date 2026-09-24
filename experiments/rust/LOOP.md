@@ -42,7 +42,7 @@ update `README.md` (results + verdict) and report to the user.
 
 ## Backlog (highest expected value first; iterations may add items)
 
-- [ ] **Bug hunt:** property-based Rust tests (`proptest`) against a naive
+- [x] **Bug hunt:** property-based Rust tests (`proptest`) against a naive
       O(n^2) brute-force oracle of the purge/embargo definition; edge cases
       (n == n_groups, k == N-1, embargo >= n, horizon 0, numpy `X`).
 - [ ] **Efficiency, non-monotone path:** only `i` in `[b0 - H, b0)` can have
@@ -70,3 +70,4 @@ update `README.md` (results + verdict) and report to the user.
 | # | Item | Outcome | Commit |
 |---|------|---------|--------|
 | 0 | Initial engine, wrapper, equivalence suite, benchmark | 3-7x serial, up to 36x parallel; ~4% end to end | see git log |
+| 1 | Bug hunt: proptest vs brute-force pairwise oracle, edge shapes | **Fixed a real bug:** `SplitPlan` embargo add wrapped in release builds (`embargo=2**64-1` gave *no* embargo, i.e. leakage); now saturating. Oracle mutation-tested (3/3 planted bugs caught). Construction/validation moved to pure Rust so it's testable without Python. | see git log |
