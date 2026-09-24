@@ -1,0 +1,23 @@
+[package]
+name = "purgedcv-rs"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.85"
+description = "Experimental Rust engine for purgedcv's combinatorial purged splits."
+license = "MIT"
+publish = false
+
+[lib]
+name = "_engine"
+crate-type = ["cdylib"]
+
+[dependencies]
+# abi3: one wheel per platform covers every CPython >= 3.10, instead of one
+# wheel per (platform x Python version).
+pyo3 = { version = "0.29", features = ["abi3-py310"] }
+numpy = "0.29"
+rayon = "1.10"
+
+[profile.release]
+lto = "fat"
+codegen-units = 1
