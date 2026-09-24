@@ -180,3 +180,31 @@ def test_masks_raise_on_degenerate_fold_and_warn_at_caller():
     with pytest.warns(UserWarning, match="groups is accepted") as rec:
         purgedcv_rs.CombinatorialPurgedCV(6, 2).masks(X, groups=np.zeros(126))
     assert rec[0].filename == __file__
+
+
+@pytest.mark.parametrize("n_groups,n_test", [(2, 1), (3, 2), (6, 2), (8, 3), (10, 5), (12, 11)])
+@pytest.mark.parametrize("n_extra", [0, 7, 250])
+def test_build_paths_matches_python(n_groups, n_test, n_extra):
+    n = n_groups + n_extra
+    X = pd.DataFrame({"x": np.zeros(n)}, index=pd.bdate_range("2001", periods=n))
+    py = purgedcv.CombinatorialPurgedCV(n_groups, n_test).build_paths(X)
+    rs = purgedcv_rs.CombinatorialPurgedCV(n_groups, n_test).build_paths(X)
+    assert isinstance(rs, purgedcv.CPCVPaths)
+    for field in ("is_test", "paths", "path_folds"):
+        a, b = getattr(py, field), getattr(rs, field)
+        assert a.shape == b.shape and a.dtype == b.dtype, field
+        assert b.flags.c_contiguous, field
+        np.testing.assert_array_equal(a, b, err_msg=field)
+    assert (rs.n_sims, rs.n_paths) == (py.n_sims, py.n_paths)
+    assert rs.index.equals(py.index)
+    pred = np.random.default_rng(0).normal(size=(n, py.n_sims))
+    np.testing.assert_array_equal(rs.combine(pred), py.combine(pred))
+    pd.testing.assert_frame_equal(rs.to_frame(pred), py.to_frame(pred))
+
+
+def test_build_paths_rejects_bad_input_like_python():
+    for engine in (purgedcv, purgedcv_rs):
+        with pytest.raises(ValueError, match="must be >= n_groups"):
+            engine.CombinatorialPurgedCV(6, 2).build_paths(np.zeros(5))
+    with pytest.raises(RuntimeError, match="precondition violated"):
+        purgedcv_rs._engine.build_paths(10, 3, [[0], [0, 1]], 1)

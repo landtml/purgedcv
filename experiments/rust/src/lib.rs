@@ -15,7 +15,7 @@
 //! re-checked in `SplitPlan::new`): `i <= end_pos[i] < n` for every `i`.
 
 use numpy::{IntoPyArray, PyReadonlyArray1};
-use pyo3::exceptions::PyValueError;
+use pyo3::exceptions::{PyRuntimeError, PyValueError};
 use pyo3::prelude::*;
 use pyo3::types::PyTuple;
 use rayon::prelude::*;
@@ -87,9 +87,7 @@ impl SplitPlan {
                 }
             }
         }
-        let block = n / n_groups;
-        let mut bounds: Vec<usize> = (0..n_groups).map(|g| g * block).collect();
-        bounds.push(n);
+        let bounds = group_bounds(n, n_groups);
         let monotone = end.windows(2).all(|w| w[0] <= w[1]);
         let max_horizon = end.iter().enumerate().map(|(i, &e)| e - i).max().unwrap();
         // Groups are non-empty since n >= n_groups.
@@ -331,6 +329,99 @@ impl SplitPlan {
     }
 }
 
+/// Group boundaries shared by `SplitPlan` and `build_paths`: `n // n_groups`
+/// observations per group, the remainder folded into the last group.
+fn group_bounds(n: usize, n_groups: usize) -> Vec<usize> {
+    let block = n / n_groups;
+    let mut bounds: Vec<usize> = (0..n_groups).map(|g| g * block).collect();
+    bounds.push(n);
+    bounds
+}
+
+/// Copy `rows[g]` into every buffer row that belongs to group `g`, in parallel.
+fn broadcast_rows<T: Copy + Send + Sync>(bounds: &[usize], rows: &[Vec<T>], out: &mut [T]) {
+    let width = rows[0].len();
+    let block = bounds[1];
+    let last = rows.len() - 1;
+    out.par_chunks_mut(width)
+        .enumerate()
+        .for_each(|(i, row)| row.copy_from_slice(&rows[(i / block).min(last)]));
+}
+
+type PathMap = (Vec<bool>, Vec<i64>, Vec<i64>);
+
+/// The combinatorial path map, as flat row-major buffers.
+///
+/// Path `p` takes, for each group, the `p`-th simulation (in combination
+/// order) in which that group is tested -- exactly what the Python engine's
+/// consume-as-you-go stitch produces. Every per-observation row is a copy of
+/// its group's row, so `is_test` and `paths` are parallel row broadcasts.
+fn path_map(
+    n: usize,
+    n_groups: usize,
+    combos: &[Vec<usize>],
+    n_paths: usize,
+) -> Result<PathMap, String> {
+    let n_sims = combos.len();
+    let mut group_sims: Vec<Vec<i64>> = vec![Vec::with_capacity(n_paths); n_groups];
+    let mut test_rows = vec![vec![false; n_sims]; n_groups];
+    for (c, combo) in combos.iter().enumerate() {
+        for &g in combo {
+            group_sims[g].push(c as i64);
+            test_rows[g][c] = true;
+        }
+    }
+    if group_sims.iter().any(|sims| sims.len() != n_paths) {
+        let degree: Vec<usize> = group_sims.iter().map(Vec::len).collect();
+        return Err(format!(
+            "path-stitch precondition violated: every group must be a test \
+             fold in exactly {n_paths} simulations, got {degree:?}."
+        ));
+    }
+    let bounds = group_bounds(n, n_groups);
+    let mut is_test = vec![false; n * n_sims];
+    let mut paths = vec![0i64; n * n_paths];
+    if n_sims > 0 {
+        broadcast_rows(&bounds, &test_rows, &mut is_test);
+    }
+    if n_paths > 0 {
+        broadcast_rows(&bounds, &group_sims, &mut paths);
+    }
+    Ok((is_test, paths, group_sims.concat()))
+}
+
+/// Path map for `n` samples; see `path_map`. Returns flat `(is_test, paths,
+/// path_folds)` buffers of shape `(n, n_sims)`, `(n, n_paths)` and
+/// `(n_groups, n_paths)`, row-major.
+#[pyfunction]
+fn build_paths<'py>(
+    py: Python<'py>,
+    n: usize,
+    n_groups: usize,
+    combos: Vec<Vec<usize>>,
+    n_paths: usize,
+) -> PyResult<Bound<'py, PyTuple>> {
+    if n_groups < 2 || n < n_groups {
+        return Err(PyValueError::new_err(format!(
+            "need 2 <= n_groups <= n_samples; got n_groups={n_groups}, n_samples={n}"
+        )));
+    }
+    if combos.iter().flatten().any(|&g| g >= n_groups) {
+        return Err(PyValueError::new_err("combo group out of range"));
+    }
+    let (is_test, paths, folds) = py
+        .detach(|| path_map(n, n_groups, &combos, n_paths))
+        .map_err(PyRuntimeError::new_err)?;
+    PyTuple::new(
+        py,
+        [
+            is_test.into_pyarray(py).into_any(),
+            paths.into_pyarray(py).into_any(),
+            folds.into_pyarray(py).into_any(),
+        ],
+    )
+}
+
 /// Worker threads in the pool `split_many` runs on (honours `RAYON_NUM_THREADS`).
 #[pyfunction]
 fn num_threads() -> usize {
@@ -341,6 +432,7 @@ fn num_threads() -> usize {
 fn _engine(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<SplitPlan>()?;
     m.add_function(wrap_pyfunction!(num_threads, m)?)?;
+    m.add_function(wrap_pyfunction!(build_paths, m)?)?;
     Ok(())
 }
 

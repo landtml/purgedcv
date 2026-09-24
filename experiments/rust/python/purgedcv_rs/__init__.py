@@ -19,7 +19,7 @@ import purgedcv
 from purgedcv import CPCVPaths, make_t1
 from purgedcv._splitter import _end_positions, _sample_index
 
-from ._engine import SplitPlan, num_threads
+from ._engine import SplitPlan, build_paths as _build_paths, num_threads
 
 __all__ = ["CombinatorialPurgedCV", "CPCVPaths", "SplitPlan", "make_t1"]
 
@@ -130,3 +130,21 @@ class CombinatorialPurgedCV(purgedcv.CombinatorialPurgedCV):
         for combo, n_train in zip(combos, train.sum(axis=0)):
             self._check_train_size(combo, int(n_train), n, end_pos)
         return train, test
+
+    def build_paths(self, X, t1: pd.Series | None = None) -> CPCVPaths:
+        index = _sample_index(X)
+        n = len(index)
+        self._validate_n(n)
+        combos = list(self._combos())
+        n_sims, n_paths = len(combos), self.get_n_paths()
+        is_test, paths, path_folds = _build_paths(n, self.n_groups, combos, n_paths)
+        return CPCVPaths(
+            is_test=is_test.reshape(n, n_sims),
+            paths=paths.reshape(n, n_paths),
+            path_folds=path_folds.reshape(self.n_groups, n_paths),
+            index=index,
+            n_sims=n_sims,
+            n_paths=n_paths,
+        )
+
+    build_paths.__doc__ = purgedcv.CombinatorialPurgedCV.build_paths.__doc__
