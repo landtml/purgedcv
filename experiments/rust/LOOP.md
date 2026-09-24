@@ -45,7 +45,7 @@ update `README.md` (results + verdict) and report to the user.
 - [x] **Bug hunt:** property-based Rust tests (`proptest`) against a naive
       O(n^2) brute-force oracle of the purge/embargo definition; edge cases
       (n == n_groups, k == N-1, embargo >= n, horizon 0, numpy `X`).
-- [ ] **Efficiency, non-monotone path:** only `i` in `[b0 - H, b0)` can have
+- [x] **Efficiency, non-monotone path:** only `i` in `[b0 - H, b0)` can have
       `end_pos[i] >= b0`, where `H = max(end_pos[i] - i)`. Scan that window
       instead of `[0, b0)` and emit intervals, dropping the byte mask.
 - [ ] **Parallelism, lazy:** a bounded-prefetch parallel iterator so
@@ -71,3 +71,4 @@ update `README.md` (results + verdict) and report to the user.
 |---|------|---------|--------|
 | 0 | Initial engine, wrapper, equivalence suite, benchmark | 3-7x serial, up to 36x parallel; ~4% end to end | see git log |
 | 1 | Bug hunt: proptest vs brute-force pairwise oracle, edge shapes | **Fixed a real bug:** `SplitPlan` embargo add wrapped in release builds (`embargo=2**64-1` gave *no* embargo, i.e. leakage); now saturating. Oracle mutation-tested (3/3 planted bugs caught). Construction/validation moved to pure Rust so it's testable without Python. | see git log |
+| 2 | Efficiency: windowed left purge, O(k) label envelopes, exact-size output | Serial rust (ms, before -> after): 1M random 319 -> 211, 100k N16k4 random 1204 -> 606, fixed 772 -> 615, 5k 1.2 -> 0.5. Parallel N16k4 207 -> 83 (now 73x over Python). No row regressed. Byte mask removed; one code path (interval complement) for both t1 shapes. | see git log |
