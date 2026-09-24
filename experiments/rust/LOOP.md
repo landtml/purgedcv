@@ -52,9 +52,11 @@ update `README.md` (results + verdict) and report to the user.
       `split()` stays lazy and memory-bounded while computing ahead on a
       rayon pool (`split(X, prefetch=...)`-free: keep signature, add a
       constructor-free module setting or `split_iter(n_ahead)`).
-- [ ] **Parallelism, intra-split:** for very large n, write one split's output
-      with parallel chunked fills.
-- [ ] **Feature:** `train_masks(X, t1)` / `test_masks` returning
+- [~] **Parallelism, intra-split:** for very large n, write one split's output
+      with parallel chunked fills. *Skipped (iter 4): iteration 3 already
+      parallelises across splits, and output writing is memory-bandwidth bound;
+      it would only help when C(N, k) < cores at very large n.*
+- [x] **Feature:** `masks(X, t1)` (shipped as one call returning train + test) returning
       `(n_samples, n_sims)` bool matrices, built in parallel (for JAX `vmap`
       and weighted-fit users).
 - [ ] **Feature:** `build_paths` in Rust (parallel), verified equal to Python.
@@ -73,3 +75,4 @@ update `README.md` (results + verdict) and report to the user.
 | 1 | Bug hunt: proptest vs brute-force pairwise oracle, edge shapes | **Fixed a real bug:** `SplitPlan` embargo add wrapped in release builds (`embargo=2**64-1` gave *no* embargo, i.e. leakage); now saturating. Oracle mutation-tested (3/3 planted bugs caught). Construction/validation moved to pure Rust so it's testable without Python. | see git log |
 | 2 | Efficiency: windowed left purge, O(k) label envelopes, exact-size output | Serial rust (ms, before -> after): 1M random 319 -> 211, 100k N16k4 random 1204 -> 606, fixed 772 -> 615, 5k 1.2 -> 0.5. Parallel N16k4 207 -> 83 (now 73x over Python). No row regressed. Byte mask removed; one code path (interval complement) for both t1 shapes. | see git log |
 | 3 | Parallelism, lazy: `split()` computes batches of 2x threads via `split_many`, serial below 20k samples (measured crossover) | Lazy `split()` (ms, iter 2 -> 3): 1M fixed 198 -> 79, 1M random 211 -> 104, 100k N16k4 615 -> 140 / 606 -> 120 (now ~40x over Python, still lazy, memory bounded to one batch). 5k within noise (0.5 -> 0.6). First try regressed small n 2.4x via pool overhead + batching loop; fixed with the cutoff and a plain serial loop. Tests: prefix + error parity when a fold goes degenerate mid-stream, both sides of the cutoff. | see git log |
+| 4 | Feature: `masks(X)` -> `(train, test)` bool `(n_samples, n_sims)` F-ordered, columns filled in parallel, zero-copy reshape | 15x (100k, 1M) to 44x (N16k4) over building the same masks from Python splits. Test masks equal Python's `build_paths().is_test`; oracle proptest covers the mask painter. `_resolve` shared by `split_all`/`masks`; `groups` warning stacklevel verified to point at the caller. Intra-split parallelism skipped with rationale. No split-row regression. | see git log |

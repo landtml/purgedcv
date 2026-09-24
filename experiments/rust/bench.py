@@ -84,6 +84,27 @@ def overhead_table():
     print(f"  45 splits in the Rust kernel                   : {t_kernel * 1e3:8.1f}")
 
 
+def masks_table():
+    print("\nTrain + test masks, (n_samples, n_sims) bool, t1=make_t1(21) (ms)")
+    for n, N, k in [(100_000, 10, 2), (1_000_000, 10, 2), (100_000, 16, 4)]:
+        X = frame(n)
+        kw = dict(n_groups=N, n_test_groups=k, embargo_pct=0.01, t1=purgedcv.make_t1(X.index, 21))
+        py = purgedcv.CombinatorialPurgedCV(**kw)
+        rs = purgedcv_rs.CombinatorialPurgedCV(**kw)
+
+        def python_masks():
+            splits = list(py.split(X))
+            train = np.zeros((n, len(splits)), dtype=bool, order="F")
+            test = np.zeros((n, len(splits)), dtype=bool, order="F")
+            for c, (tr, te) in enumerate(splits):
+                train[tr, c] = True
+                test[te, c] = True
+
+        t_py = best_of(python_masks, repeats=3)
+        t_rs = best_of(lambda: rs.masks(X), repeats=3)
+        print(f"  n={n:>9,} N,k={N},{k}: python {t_py * 1e3:8.1f}  rust {t_rs * 1e3:7.1f}  ({t_py / t_rs:.0f}x)")
+
+
 def end_to_end():
     print("\nEnd-to-end cross_val_score(Ridge), n=100,000 x 20 features, N=10, k=2 (s)")
     X = frame(100_000, cols=20)
@@ -98,4 +119,5 @@ def end_to_end():
 if __name__ == "__main__":
     splits_table()
     overhead_table()
+    masks_table()
     end_to_end()

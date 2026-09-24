@@ -42,14 +42,14 @@ class CombinatorialPurgedCV(purgedcv.CombinatorialPurgedCV):
     def _combos(self) -> Iterator[tuple[int, ...]]:
         return itertools.combinations(range(self.n_groups), self.n_test_groups)
 
-    def _check_train_size(self, combo, train, n, end_pos) -> None:
+    def _check_train_size(self, combo, n_train: int, n, end_pos) -> None:
         # Same message as the pure-Python splitter, so callers can't tell the
         # engines apart by their errors.
-        if len(train) >= self.min_train_size:
+        if n_train >= self.min_train_size:
             return
         horizon = int((end_pos - np.arange(n)).max())
         raise ValueError(
-            f"split with test groups {combo} retains {len(train)} training "
+            f"split with test groups {combo} retains {n_train} training "
             f"observation(s) after purge and embargo, below "
             f"min_train_size={self.min_train_size}. n_samples={n}, "
             f"longest label horizon={horizon} bars, "
@@ -59,6 +59,22 @@ class CombinatorialPurgedCV(purgedcv.CombinatorialPurgedCV):
             f"allow degenerate folds."
         )
 
+    def _resolve(self, X, groups, t1) -> tuple[int, npt.NDArray[np.int_]]:
+        """What :meth:`split` validates and resolves before its first fold."""
+        if groups is not None:
+            warnings.warn(
+                "groups is accepted for sklearn API compatibility but is never "
+                "used: CombinatorialPurgedCV forms its own contiguous time "
+                "groups from n_groups. Pass t1 to control label lifespans.",
+                UserWarning,
+                stacklevel=3,  # past _resolve and the public method
+            )
+        t1 = self.t1 if t1 is None else t1
+        index = _sample_index(X)
+        n = len(index)
+        self._validate_n(n)
+        return n, _end_positions(index, t1)
+
     def _iter_splits(
         self, n: int, index: pd.Index, end_pos: npt.NDArray[np.int_]
     ) -> Iterator[tuple[npt.NDArray[np.int_], npt.NDArray[np.int_]]]:
@@ -67,7 +83,7 @@ class CombinatorialPurgedCV(purgedcv.CombinatorialPurgedCV):
         if n < _PARALLEL_MIN_SAMPLES:
             for combo in combos:
                 train, test = plan.split(combo)
-                self._check_train_size(combo, train, n, end_pos)
+                self._check_train_size(combo, len(train), n, end_pos)
                 yield train, test
             return
         # Lazy but parallel: compute a batch of splits across the thread pool,
@@ -76,7 +92,7 @@ class CombinatorialPurgedCV(purgedcv.CombinatorialPurgedCV):
         batch_size = 2 * num_threads()
         while batch := list(itertools.islice(combos, batch_size)):
             for combo, (train, test) in zip(batch, plan.split_many(batch)):
-                self._check_train_size(combo, train, n, end_pos)
+                self._check_train_size(combo, len(train), n, end_pos)
                 yield train, test
 
     def split_all(
@@ -87,21 +103,30 @@ class CombinatorialPurgedCV(purgedcv.CombinatorialPurgedCV):
         Trades the lazy generator of :meth:`split` for throughput: all
         ``C(N, k)`` train/test arrays are held in memory together.
         """
-        if groups is not None:
-            warnings.warn(
-                "groups is accepted for sklearn API compatibility but is never "
-                "used: CombinatorialPurgedCV forms its own contiguous time "
-                "groups from n_groups. Pass t1 to control label lifespans.",
-                UserWarning,
-                stacklevel=2,
-            )
-        t1 = self.t1 if t1 is None else t1
-        index = _sample_index(X)
-        n = len(index)
-        self._validate_n(n)
-        end_pos = _end_positions(index, t1)
+        n, end_pos = self._resolve(X, groups, t1)
         combos = list(self._combos())
         out = self._plan(n, end_pos).split_many(combos)
         for combo, (train, _) in zip(combos, out):
-            self._check_train_size(combo, train, n, end_pos)
+            self._check_train_size(combo, len(train), n, end_pos)
         return out
+
+    def masks(
+        self, X, y=None, groups=None, t1: pd.Series | None = None
+    ) -> tuple[npt.NDArray[np.bool_], npt.NDArray[np.bool_]]:
+        """Boolean ``(n_samples, n_sims)`` train and test membership matrices.
+
+        Column ``c`` corresponds to the ``c``-th split yielded by :meth:`split`:
+        ``np.flatnonzero(train[:, c])`` equals its ``train_idx``. Fixed-shape
+        masks suit batched training across every split at once (e.g. JAX
+        ``vmap`` over sample weights) where variable-length index arrays do not.
+        Columns are built in parallel and returned Fortran-ordered, so each
+        split's column is contiguous. Degenerate folds raise as in :meth:`split`.
+        """
+        n, end_pos = self._resolve(X, groups, t1)
+        combos = list(self._combos())
+        train, test = self._plan(n, end_pos).masks(combos)
+        train = train.reshape(len(combos), n).T
+        test = test.reshape(len(combos), n).T
+        for combo, n_train in zip(combos, train.sum(axis=0)):
+            self._check_train_size(combo, int(n_train), n, end_pos)
+        return train, test

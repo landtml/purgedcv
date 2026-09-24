@@ -142,3 +142,41 @@ def test_lazy_split_is_lazy_and_raises_at_the_same_fold(n):
     assert len(outcomes[0][0]) == len(outcomes[1][0]) > 0
     _assert_same_splits(outcomes[0][0], outcomes[1][0])
     assert outcomes[0][1] == outcomes[1][1]
+
+
+@pytest.mark.parametrize("seed", range(40))
+def test_masks_match_python_splits(seed):
+    rng = np.random.default_rng(1000 + seed)
+    n_groups = int(rng.integers(2, 8))
+    n = int(rng.integers(n_groups, 300))
+    index = pd.bdate_range("2000-01-03", periods=n)
+    X = pd.DataFrame({"x": np.zeros(n)}, index=index)
+    kw = dict(
+        n_groups=n_groups,
+        n_test_groups=int(rng.integers(1, n_groups)),
+        embargo_pct=float(rng.choice([0.0, 0.05])),
+        embargo_anchor=str(rng.choice(["label_end", "test_end"])),
+        t1=_random_t1(rng, index, rng.choice(["none", "fixed", "random"])),
+        min_train_size=0,
+    )
+    train, test = purgedcv_rs.CombinatorialPurgedCV(**kw).masks(X)
+    py_splits = list(purgedcv.CombinatorialPurgedCV(**kw).split(X))
+    assert train.shape == test.shape == (n, len(py_splits))
+    assert train.dtype == test.dtype == np.bool_
+    assert train.flags.f_contiguous and test.flags.f_contiguous
+    for c, (py_tr, py_te) in enumerate(py_splits):
+        np.testing.assert_array_equal(np.flatnonzero(train[:, c]), py_tr)
+        np.testing.assert_array_equal(np.flatnonzero(test[:, c]), py_te)
+    # CPCVPaths.is_test is the Python engine's own test-membership matrix.
+    paths = purgedcv.CombinatorialPurgedCV(**kw).build_paths(X)
+    np.testing.assert_array_equal(test, paths.is_test)
+
+
+def test_masks_raise_on_degenerate_fold_and_warn_at_caller():
+    X = pd.DataFrame({"x": np.zeros(126)}, index=pd.bdate_range("2020", periods=126))
+    cv = purgedcv_rs.CombinatorialPurgedCV(6, 2, embargo_pct=0.01, t1=purgedcv.make_t1(X.index, 21))
+    with pytest.raises(ValueError, match="retains 0 training"):
+        cv.masks(X)
+    with pytest.warns(UserWarning, match="groups is accepted") as rec:
+        purgedcv_rs.CombinatorialPurgedCV(6, 2).masks(X, groups=np.zeros(126))
+    assert rec[0].filename == __file__

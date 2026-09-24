@@ -200,11 +200,32 @@ impl SplitPlan {
         for b in &blocks {
             test.extend(b.lo as i64..b.hi as i64);
         }
+        (complement(self.removals(&blocks), self.n()), test)
+    }
+
+    /// Every removal interval for a combination: purge, left purge, embargo.
+    fn removals(&self, blocks: &[Block]) -> Vec<Span> {
         let mut removals: Vec<Span> = Vec::with_capacity(3 * blocks.len());
-        for &block in &blocks {
+        for &block in blocks {
             self.block_removals(block, &mut removals);
         }
-        (complement(removals, self.n()), test)
+        removals
+    }
+
+    /// Write one combination's train and test membership into boolean columns.
+    ///
+    /// Same intervals as `compute`, painted instead of complemented: the
+    /// removals cover the test blocks, so train is `true` outside them.
+    fn fill_masks(&self, combo: &[usize], train: &mut [bool], test: &mut [bool]) {
+        let blocks = self.test_blocks(combo);
+        train.fill(true);
+        for (lo, hi) in self.removals(&blocks) {
+            train[lo..hi].fill(false);
+        }
+        test.fill(false);
+        for b in &blocks {
+            test[b.lo..b.hi].fill(true);
+        }
     }
 }
 
@@ -279,6 +300,34 @@ impl SplitPlan {
         let results: Vec<Split> =
             py.detach(|| combos.par_iter().map(|c| self.compute(c)).collect());
         results.into_iter().map(|r| to_py(py, r)).collect()
+    }
+
+    /// Train and test membership for every combination, as two flat boolean
+    /// buffers of `len(combos) * n_samples`: combination `c` occupies
+    /// `[c * n, (c + 1) * n)`. Reshaped to `(len(combos), n).T` this is an
+    /// `(n_samples, n_sims)` Fortran-ordered matrix with no copy. Columns are
+    /// filled in parallel.
+    fn masks<'py>(
+        &self,
+        py: Python<'py>,
+        combos: Vec<Vec<usize>>,
+    ) -> PyResult<Bound<'py, PyTuple>> {
+        combos
+            .iter()
+            .try_for_each(|c| self.check_combo(c))
+            .map_err(PyValueError::new_err)?;
+        let n = self.n();
+        let (train, test) = py.detach(|| {
+            let mut train = vec![false; combos.len() * n];
+            let mut test = vec![false; combos.len() * n];
+            train
+                .par_chunks_mut(n)
+                .zip(test.par_chunks_mut(n))
+                .zip(&combos)
+                .for_each(|((tr, te), combo)| self.fill_masks(combo, tr, te));
+            (train, test)
+        });
+        PyTuple::new(py, [train.into_pyarray(py), test.into_pyarray(py)])
     }
 }
 
@@ -422,10 +471,17 @@ mod tests {
         ) {
             let raw: Vec<i64> = end.iter().map(|&e| e as i64).collect();
             let plan = SplitPlan::build(&raw, n_groups, embargo, anchor).unwrap();
-            prop_assert_eq!(
-                plan.compute(&combo),
-                oracle(&end, n_groups, &combo, embargo, anchor)
-            );
+            let (train, test) = oracle(&end, n_groups, &combo, embargo, anchor);
+            prop_assert_eq!(plan.compute(&combo), (train.clone(), test.clone()));
+
+            let n = end.len();
+            let (mut train_mask, mut test_mask) = (vec![false; n], vec![false; n]);
+            plan.fill_masks(&combo, &mut train_mask, &mut test_mask);
+            let positions = |m: &[bool]| -> Vec<i64> {
+                (0..n).filter(|&i| m[i]).map(|i| i as i64).collect()
+            };
+            prop_assert_eq!(positions(&train_mask), train);
+            prop_assert_eq!(positions(&test_mask), test);
         }
     }
 }
