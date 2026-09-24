@@ -282,9 +282,16 @@ impl SplitPlan {
     }
 }
 
+/// Worker threads in the pool `split_many` runs on (honours `RAYON_NUM_THREADS`).
+#[pyfunction]
+fn num_threads() -> usize {
+    rayon::current_num_threads()
+}
+
 #[pymodule]
 fn _engine(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<SplitPlan>()?;
+    m.add_function(wrap_pyfunction!(num_threads, m)?)?;
     Ok(())
 }
 

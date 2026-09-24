@@ -114,3 +114,31 @@ def test_huge_embargo_on_raw_plan_saturates():
     train, test = plan.split([0])
     assert train.size == 0
     np.testing.assert_array_equal(test, np.arange(5))
+
+
+@pytest.mark.parametrize("n", [100, 25_000])  # below and above the parallel cutoff
+def test_lazy_split_is_lazy_and_raises_at_the_same_fold(n):
+    X = pd.DataFrame({"x": np.zeros(n)}, index=pd.bdate_range("1990", periods=n))
+    cv = purgedcv_rs.CombinatorialPurgedCV(10, 3, embargo_pct=0.01, t1=purgedcv.make_t1(X.index, 5))
+    it = cv.split(X)
+    first = next(it)
+    _assert_same_splits([first], [next(purgedcv.CombinatorialPurgedCV(
+        10, 3, embargo_pct=0.01, t1=purgedcv.make_t1(X.index, 5)).split(X))])
+    it.close()
+    # A fold goes degenerate partway through: both engines must yield the same
+    # prefix and then raise the same error. Require exactly the first fold's
+    # training size, so it passes and a later, more heavily purged one fails.
+    t1 = purgedcv.make_t1(X.index, n // 10)
+    sizes = [len(tr) for tr, _ in purgedcv.CombinatorialPurgedCV(10, 3, t1=t1).split(X)]
+    assert min(sizes) < sizes[0]
+    kw = dict(n_groups=10, n_test_groups=3, t1=t1, min_train_size=sizes[0])
+    outcomes = []
+    for engine in (purgedcv, purgedcv_rs):
+        got = []
+        with pytest.raises(ValueError) as exc:
+            for split in engine.CombinatorialPurgedCV(**kw).split(X):
+                got.append(split)
+        outcomes.append((got, str(exc.value)))
+    assert len(outcomes[0][0]) == len(outcomes[1][0]) > 0
+    _assert_same_splits(outcomes[0][0], outcomes[1][0])
+    assert outcomes[0][1] == outcomes[1][1]

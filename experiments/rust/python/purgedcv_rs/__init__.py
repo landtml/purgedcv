@@ -19,9 +19,13 @@ import purgedcv
 from purgedcv import CPCVPaths, make_t1
 from purgedcv._splitter import _end_positions, _sample_index
 
-from ._engine import SplitPlan
+from ._engine import SplitPlan, num_threads
 
 __all__ = ["CombinatorialPurgedCV", "CPCVPaths", "SplitPlan", "make_t1"]
+
+# Below this many samples a split costs less than dispatching it to the thread
+# pool (measured crossover ~15-20k on 4 cores), so split() stays serial.
+_PARALLEL_MIN_SAMPLES = 20_000
 
 
 class CombinatorialPurgedCV(purgedcv.CombinatorialPurgedCV):
@@ -59,10 +63,21 @@ class CombinatorialPurgedCV(purgedcv.CombinatorialPurgedCV):
         self, n: int, index: pd.Index, end_pos: npt.NDArray[np.int_]
     ) -> Iterator[tuple[npt.NDArray[np.int_], npt.NDArray[np.int_]]]:
         plan = self._plan(n, end_pos)
-        for combo in self._combos():
-            train, test = plan.split(combo)
-            self._check_train_size(combo, train, n, end_pos)
-            yield train, test
+        combos = self._combos()
+        if n < _PARALLEL_MIN_SAMPLES:
+            for combo in combos:
+                train, test = plan.split(combo)
+                self._check_train_size(combo, train, n, end_pos)
+                yield train, test
+            return
+        # Lazy but parallel: compute a batch of splits across the thread pool,
+        # yield it, then compute the next. At most one batch is held in memory,
+        # and a degenerate fold still raises at the same split as before.
+        batch_size = 2 * num_threads()
+        while batch := list(itertools.islice(combos, batch_size)):
+            for combo, (train, test) in zip(batch, plan.split_many(batch)):
+                self._check_train_size(combo, train, n, end_pos)
+                yield train, test
 
     def split_all(
         self, X, y=None, groups=None, t1: pd.Series | None = None

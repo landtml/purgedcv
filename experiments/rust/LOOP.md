@@ -48,7 +48,7 @@ update `README.md` (results + verdict) and report to the user.
 - [x] **Efficiency, non-monotone path:** only `i` in `[b0 - H, b0)` can have
       `end_pos[i] >= b0`, where `H = max(end_pos[i] - i)`. Scan that window
       instead of `[0, b0)` and emit intervals, dropping the byte mask.
-- [ ] **Parallelism, lazy:** a bounded-prefetch parallel iterator so
+- [x] **Parallelism, lazy:** a bounded-prefetch parallel iterator so
       `split()` stays lazy and memory-bounded while computing ahead on a
       rayon pool (`split(X, prefetch=...)`-free: keep signature, add a
       constructor-free module setting or `split_iter(n_ahead)`).
@@ -72,3 +72,4 @@ update `README.md` (results + verdict) and report to the user.
 | 0 | Initial engine, wrapper, equivalence suite, benchmark | 3-7x serial, up to 36x parallel; ~4% end to end | see git log |
 | 1 | Bug hunt: proptest vs brute-force pairwise oracle, edge shapes | **Fixed a real bug:** `SplitPlan` embargo add wrapped in release builds (`embargo=2**64-1` gave *no* embargo, i.e. leakage); now saturating. Oracle mutation-tested (3/3 planted bugs caught). Construction/validation moved to pure Rust so it's testable without Python. | see git log |
 | 2 | Efficiency: windowed left purge, O(k) label envelopes, exact-size output | Serial rust (ms, before -> after): 1M random 319 -> 211, 100k N16k4 random 1204 -> 606, fixed 772 -> 615, 5k 1.2 -> 0.5. Parallel N16k4 207 -> 83 (now 73x over Python). No row regressed. Byte mask removed; one code path (interval complement) for both t1 shapes. | see git log |
+| 3 | Parallelism, lazy: `split()` computes batches of 2x threads via `split_many`, serial below 20k samples (measured crossover) | Lazy `split()` (ms, iter 2 -> 3): 1M fixed 198 -> 79, 1M random 211 -> 104, 100k N16k4 615 -> 140 / 606 -> 120 (now ~40x over Python, still lazy, memory bounded to one batch). 5k within noise (0.5 -> 0.6). First try regressed small n 2.4x via pool overhead + batching loop; fixed with the cutoff and a plain serial loop. Tests: prefix + error parity when a fold goes degenerate mid-stream, both sides of the cutoff. | see git log |
